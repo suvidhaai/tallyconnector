@@ -1,0 +1,633 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>ComplianceAI Expert — Sign In</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+	<style>
+		 *, *::before, *::after {
+			 box-sizing: border-box;
+			 margin: 0;
+			 padding: 0;
+		 }
+
+		 :root {
+			 --navy: #1e2d7d;
+			 --navy-dark: #16216b;
+			 --navy-deeper: #111a58;
+			 --orange: #e8621a;
+			 --orange-hover: #d45510;
+			 --bg: #eef0f7;
+			 --white: #ffffff;
+			 --border: #dde1ee;
+			 --text: #1a1d2e;
+			 --text2: #4a5070;
+			 --text3: #8890b0;
+		 }
+
+		 html, body {
+			 height: 100%;
+			 font-family: 'Inter', sans-serif;
+			 background: var(--bg);
+			 overflow: hidden;
+		 }
+
+		 .layout {
+			 display: grid;
+			 grid-template-columns: 1fr 1fr;
+			 height: 100vh;
+		 }
+
+		 /* ═══════════════════════════
+		LEFT — Navy brand panel
+		═══════════════════════════ */
+		 .left {
+			 background: var(--navy);
+			 display: flex;
+			 flex-direction: column;
+			 justify-content: space-between;
+			 padding: 44px 52px;
+			 position: relative;
+			 overflow: hidden;
+		 }
+
+			 /* Subtle dot grid */
+			 .left::before {
+				 content: '';
+				 position: absolute;
+				 inset: 0;
+				 background-image: radial-gradient(rgba(255,255,255,0.07) 1px, transparent 1px);
+				 background-size: 28px 28px;
+				 pointer-events: none;
+			 }
+
+			 /* Orange glow blob bottom-left */
+			 .left::after {
+				 content: '';
+				 position: absolute;
+				 bottom: -100px;
+				 left: -60px;
+				 width: 380px;
+				 height: 380px;
+				 background: radial-gradient(circle, rgba(232,98,26,0.22) 0%, transparent 65%);
+				 pointer-events: none;
+			 }
+
+		 /* Second glow top-right */
+		 .glow2 {
+			 position: absolute;
+			 top: -80px;
+			 right: -80px;
+			 width: 300px;
+			 height: 300px;
+			 background: radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 70%);
+			 pointer-events: none;
+		 }
+
+		 .left-brand {
+			 display: flex;
+			 align-items: center;
+			 gap: 10px;
+			 position: relative;
+			 z-index: 1;
+		 }
+
+		 .brand-logo-box {
+			 width: 38px;
+			 height: 38px;
+			 background: var(--orange);
+			 border-radius: 9px;
+			 display: grid;
+			 place-items: center;
+			 font-weight: 800;
+			 font-size: 14px;
+			 color: white;
+			 letter-spacing: -0.5px;
+			 flex-shrink: 0;
+		 }
+
+		 .brand-name {
+			 font-size: 16px;
+			 font-weight: 700;
+			 color: white;
+			 letter-spacing: -0.01em;
+		 }
+
+		 .left-center {
+			 position: relative;
+			 z-index: 1;
+		 }
+
+		 .left-tagline {
+			 font-size: 38px;
+			 font-weight: 800;
+			 line-height: 1.15;
+			 color: white;
+			 letter-spacing: -0.02em;
+			 margin-bottom: 16px;
+		 }
+
+			 .left-tagline .orange {
+				 color: var(--orange);
+			 }
+
+		 .left-desc {
+			 font-size: 13.5px;
+			 color: rgba(255,255,255,0.5);
+			 line-height: 1.75;
+			 max-width: 300px;
+			 margin-bottom: 36px;
+		 }
+
+		 /* Feature list */
+		 .features {
+			 display: flex;
+			 flex-direction: column;
+			 gap: 12px;
+		 }
+
+		 .feature-row {
+			 display: flex;
+			 align-items: center;
+			 gap: 12px;
+		 }
+
+		 .feature-icon {
+			 width: 32px;
+			 height: 32px;
+			 background: rgba(255,255,255,0.08);
+			 border: 1px solid rgba(255,255,255,0.1);
+			 border-radius: 7px;
+			 display: grid;
+			 place-items: center;
+			 flex-shrink: 0;
+		 }
+
+		 .feature-text {
+			 font-size: 12.5px;
+			 color: rgba(255,255,255,0.6);
+			 font-weight: 500;
+		 }
+
+		 .left-footer {
+			 font-size: 11.5px;
+			 color: rgba(255,255,255,0.2);
+			 position: relative;
+			 z-index: 1;
+		 }
+
+		 /* ═══════════════════════════
+		RIGHT — Login form
+		═══════════════════════════ */
+		 .right {
+			 background: var(--bg);
+			 display: flex;
+			 align-items: center;
+			 justify-content: center;
+			 padding: 40px;
+		 }
+
+		 .form-card {
+			 width: 100%;
+			 max-width: 380px;
+			 background: var(--white);
+			 border-radius: 16px;
+			 padding: 40px 36px;
+			 box-shadow: 0 4px 24px rgba(30,45,125,0.10), 0 1px 4px rgba(30,45,125,0.06);
+			 border: 1px solid var(--border);
+			 animation: slideUp 0.35s cubic-bezier(0.22,1,0.36,1) both;
+		 }
+
+		 /* CE badge on top of card */
+		 .card-badge {
+			 width: 44px;
+			 height: 44px;
+			 background: var(--navy);
+			 border-radius: 10px;
+			 display: grid;
+			 place-items: center;
+			 font-weight: 800;
+			 font-size: 15px;
+			 color: white;
+			 margin-bottom: 20px;
+		 }
+
+		 .form-heading {
+			 font-size: 22px;
+			 font-weight: 800;
+			 color: var(--text);
+			 letter-spacing: -0.02em;
+			 margin-bottom: 5px;
+		 }
+
+		 .form-sub {
+			 font-size: 13px;
+			 color: var(--text2);
+			 margin-bottom: 28px;
+		 }
+
+		 /* Error banner */
+		 .error-msg {
+			 display: none;
+			 align-items: center;
+			 gap: 8px;
+			 background: #fff5f0;
+			 border: 1px solid #ffd5c0;
+			 border-left: 3px solid var(--orange);
+			 border-radius: 8px;
+			 padding: 10px 13px;
+			 font-size: 12.5px;
+			 color: #b94010;
+			 margin-bottom: 18px;
+		 }
+
+			 .error-msg.show {
+				 display: flex;
+				 animation: fadeIn 0.2s ease;
+			 }
+
+		 /* Fields */
+		 .field {
+			 margin-bottom: 16px;
+		 }
+
+			 .field label {
+				 display: block;
+				 font-size: 11.5px;
+				 font-weight: 600;
+				 color: var(--text2);
+				 margin-bottom: 6px;
+				 letter-spacing: 0.04em;
+				 text-transform: uppercase;
+			 }
+
+		 .field-wrap {
+			 position: relative;
+		 }
+
+			 .field-wrap .field-icon {
+				 position: absolute;
+				 left: 12px;
+				 top: 50%;
+				 transform: translateY(-50%);
+				 color: var(--text3);
+				 pointer-events: none;
+				 display: flex;
+			 }
+
+		 .field input {
+			 width: 100%;
+			 height: 44px;
+			 background: var(--bg);
+			 border: 1.5px solid var(--border);
+			 border-radius: 9px;
+			 padding: 0 40px 0 40px;
+			 font-family: 'Inter', sans-serif;
+			 font-size: 13.5px;
+			 color: var(--text);
+			 outline: none;
+			 transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+		 }
+
+			 .field input:focus {
+				 border-color: var(--navy);
+				 background: var(--white);
+				 box-shadow: 0 0 0 3px rgba(30,45,125,0.08);
+			 }
+
+			 .field input::placeholder {
+				 color: var(--text3);
+			 }
+
+		 .pwd-toggle {
+			 position: absolute;
+			 right: 11px;
+			 top: 50%;
+			 transform: translateY(-50%);
+			 background: none;
+			 border: none;
+			 cursor: pointer;
+			 color: var(--text3);
+			 padding: 4px;
+			 display: flex;
+		 }
+
+			 .pwd-toggle:hover {
+				 color: var(--navy);
+			 }
+
+		 /* Submit button — orange like the website CTA */
+		 .btn-submit {
+			 width: 100%;
+			 height: 46px;
+			 background: var(--orange);
+			 color: white;
+			 border: none;
+			 border-radius: 10px;
+			 font-family: 'Inter', sans-serif;
+			 font-size: 14px;
+			 font-weight: 700;
+			 cursor: pointer;
+			 display: flex;
+			 align-items: center;
+			 justify-content: center;
+			 gap: 8px;
+			 transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+			 margin-top: 8px;
+			 box-shadow: 0 4px 14px rgba(232,98,26,0.35);
+		 }
+
+			 .btn-submit:hover {
+				 background: var(--orange-hover);
+				 box-shadow: 0 6px 20px rgba(232,98,26,0.45);
+			 }
+
+			 .btn-submit:active {
+				 transform: scale(0.99);
+			 }
+
+			 .btn-submit.loading {
+				 pointer-events: none;
+				 opacity: 0.75;
+			 }
+
+		 .spinner {
+			 display: none;
+			 width: 16px;
+			 height: 16px;
+			 border: 2px solid rgba(255,255,255,0.35);
+			 border-top-color: white;
+			 border-radius: 50%;
+			 animation: spin 0.7s linear infinite;
+		 }
+
+		 .btn-submit.loading .spinner {
+			 display: block;
+		 }
+
+		 .btn-submit.loading .btn-text {
+			 display: none;
+		 }
+
+		 /* Footer */
+		 .form-footer {
+			 margin-top: 22px;
+			 padding-top: 18px;
+			 border-top: 1px solid var(--border);
+			 font-size: 11.5px;
+			 color: var(--text3);
+			 text-align: center;
+			 display: flex;
+			 align-items: center;
+			 justify-content: center;
+			 gap: 6px;
+		 }
+
+		 /* Animations */
+		 @keyframes spin {
+			 to {
+				 transform: rotate(360deg);
+			 }
+		 }
+
+		 @keyframes fadeIn {
+			 from {
+				 opacity: 0;
+				 transform: translateY(-4px);
+			 }
+
+			 to {
+				 opacity: 1;
+			 }
+		 }
+
+		 @keyframes slideUp {
+			 from {
+				 opacity: 0;
+				 transform: translateY(18px);
+			 }
+
+			 to {
+				 opacity: 1;
+				 transform: none;
+			 }
+		 }
+	</style>
+</head>
+<body>
+
+	<div class="layout">
+
+		<!-- ── Left brand panel ── -->
+		<div class="left">
+			<div class="glow2"></div>
+
+			<div class="left-brand">
+				<div class="brand-logo-box">CE</div>
+				<span class="brand-name">ComplianceAI Expert</span>
+			</div>
+
+			<div class="left-center">
+				<h1 class="left-tagline">
+					Smart<br />
+					Compliance<br />
+					for <span class="orange">Professionals.</span>
+				</h1>
+				<p class="left-desc">
+					The all-in-one Tally connector for tax consultants and CA firms. Sync master data, vouchers, and stay audit-ready.
+				</p>
+
+				<div class="features">
+					<div class="feature-row">
+						<div class="feature-icon">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2">
+								<polyline points="23 4 23 10 17 10" />
+								<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+							</svg>
+						</div>
+						<span class="feature-text">Real-time Tally sync</span>
+					</div>
+					<div class="feature-row">
+						<div class="feature-icon">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2">
+								<rect x="2" y="7" width="20" height="14" rx="1.5" />
+								<path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2" />
+							</svg>
+						</div>
+						<span class="feature-text">Multi-company management</span>
+					</div>
+					<div class="feature-row">
+						<div class="feature-icon">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2">
+								<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+							</svg>
+						</div>
+						<span class="feature-text">Supabase-secured cloud storage</span>
+					</div>
+					<div class="feature-row">
+						<div class="feature-icon">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2">
+								<rect x="2" y="5" width="20" height="14" rx="1.5" />
+								<line x1="2" y1="10" x2="22" y2="10" />
+							</svg>
+						</div>
+						<span class="feature-text">Ledger &amp; voucher cloud backup</span>
+					</div>
+				</div>
+			</div>
+
+			<div class="left-footer">© 2025 ComplianceAI Expert · v 1.0.0</div>
+		</div>
+
+		<!-- ── Right login form ── -->
+		<div class="right">
+			<div class="form-card">
+
+				<div class="card-badge">CE</div>
+
+				<h2 class="form-heading">Welcome back</h2>
+				<p class="form-sub">Sign in to your workspace</p>
+
+				<div class="error-msg" id="error-msg">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<circle cx="12" cy="12" r="10" />
+						<line x1="12" y1="8" x2="12" y2="12" />
+						<line x1="12" y1="16" x2="12.01" y2="16" />
+					</svg>
+					<span id="error-text">Invalid email or password.</span>
+				</div>
+
+				<div class="field">
+					<label>Email</label>
+					<div class="field-wrap">
+						<span class="field-icon">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+								<polyline points="22,6 12,13 2,6" />
+							</svg>
+						</span>
+						<input type="email" id="email" placeholder="you@firm.com" autocomplete="email" />
+					</div>
+				</div>
+
+				<div class="field">
+					<label>Password</label>
+					<div class="field-wrap">
+						<span class="field-icon">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<rect x="3" y="11" width="18" height="11" rx="2" />
+								<path d="M7 11V7a5 5 0 0 1 10 0v4" />
+							</svg>
+						</span>
+						<input type="password" id="password" placeholder="••••••••" autocomplete="current-password" />
+						<button class="pwd-toggle" id="pwd-toggle" type="button" tabindex="-1">
+							<svg id="eye-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+								<circle cx="12" cy="12" r="3" />
+							</svg>
+						</button>
+					</div>
+				</div>
+
+				<button class="btn-submit" id="login-btn" type="button">
+					<div class="spinner"></div>
+					<span class="btn-text">
+						Sign In →
+					</span>
+				</button>
+
+				<div class="form-footer">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+					</svg>
+					Secured by Supabase Auth
+				</div>
+
+			</div>
+		</div>
+
+	</div>
+
+	<script>
+		const SUPABASE_URL = "https://yjcbbgjrxvwbdrcprbiy.supabase.co";
+		const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlqY2JiZ2pyeHZ3YmRyY3ByYml5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwODU1MjYsImV4cCI6MjA4MjY2MTUyNn0.ef49-rzZsq9LdEiIPX0y-HR8ji1_3_SkHcwwV9cjkNI";
+
+		const emailEl    = document.getElementById("email");
+		const passwordEl = document.getElementById("password");
+		const loginBtn   = document.getElementById("login-btn");
+		const errorMsg   = document.getElementById("error-msg");
+		const errorText  = document.getElementById("error-text");
+
+		// Password toggle
+		document.getElementById("pwd-toggle").addEventListener("click", () => {
+		const show = passwordEl.type === "password";
+		passwordEl.type = show ? "text" : "password";
+		document.getElementById("eye-icon").innerHTML = show
+		? `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>`
+		: `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`;
+		});
+
+		function showError(msg) {
+		errorText.textContent = msg;
+		errorMsg.classList.add("show");
+		}
+
+		async function doLogin() {
+		const email    = emailEl.value.trim();
+		const password = passwordEl.value;
+
+		errorMsg.classList.remove("show");
+
+		if (!email || !password) {
+		showError("Please enter your email and password.");
+		return;
+		}
+
+		loginBtn.classList.add("loading");
+
+		try {
+		const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+		method: "POST",
+		headers: {
+		"Content-Type": "application/json",
+		"apikey": SUPABASE_KEY,
+		},
+		body: JSON.stringify({ email, password }),
+		});
+
+		const data = await res.json();
+
+		if (!res.ok || data.error) {
+		showError(data.error_description || data.msg || "Invalid email or password.");
+		loginBtn.classList.remove("loading");
+		return;
+		}
+
+		// Store session
+		sessionStorage.setItem("sb_access_token",  data.access_token);
+		sessionStorage.setItem("sb_refresh_token", data.refresh_token);
+		sessionStorage.setItem("sb_user_email",    data.user?.email || email);
+
+		// Navigate to main app
+		window.location.href = "index.html";
+
+		} catch {
+		showError("Could not connect. Check your internet connection.");
+		loginBtn.classList.remove("loading");
+		}
+		}
+
+		loginBtn.addEventListener("click", doLogin);
+		[emailEl, passwordEl].forEach(el =>
+		el.addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); })
+		);
+
+		// Auto-redirect if already logged in
+		if (sessionStorage.getItem("sb_access_token")) {
+		window.location.href = "index.html";
+		}
+	</script>
+</body>
+</html>

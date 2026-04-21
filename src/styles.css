@@ -1,0 +1,973 @@
+*, *::before, *::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+:root {
+	/* ── ComplianceAIexpert brand palette ── */
+	--bg: #eef0f7;
+	--white: #ffffff;
+	--border: #dde1ee;
+	--border2: #c8cee0;
+	--text: #1a1d2e;
+	--text2: #4a5070;
+	--text3: #8890b0;
+	/* Navy — primary brand colour */
+	--blue: #1e2d7d;
+	--blue-hover: #16236a;
+	/* Orange — CTA accent */
+	--orange: #e8621a;
+	--orange-hover: #d45510;
+	--green: #22c55e;
+	--red: #ef4444;
+	--yellow: #f59e0b;
+	--shadow: 0 1px 4px rgba(30,45,125,0.08);
+	--shadow2: 0 2px 10px rgba(30,45,125,0.12);
+}
+
+html, body {
+	height: 100%;
+	background: var(--bg);
+	color: var(--text);
+	font-family: 'Inter', -apple-system, sans-serif;
+	font-size: 13px;
+	line-height: 1.5;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+
+/* ── Topbar ───────────────────────────────── */
+.topbar {
+	display: flex;
+	align-items: center;
+	background: var(--white);
+	border-bottom: 2px solid var(--border);
+	padding: 0 16px;
+	height: 48px;
+	gap: 12px;
+	flex-shrink: 0;
+}
+
+.topbar-left {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 170px;
+}
+
+.app-logo {
+	width: 28px;
+	height: 28px;
+	background: var(--blue);
+	border-radius: 6px;
+	display: grid;
+	place-items: center;
+	border: none;
+	color: white;
+	font-weight: 800;
+	font-size: 10px;
+	letter-spacing: -0.3px;
+}
+
+.app-name {
+	font-weight: 700;
+	font-size: 12.5px;
+	color: var(--blue);
+}
+
+.topbar-center {
+	flex: 1;
+	display: flex;
+	justify-content: flex-start;
+}
+
+.search-wrap {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 0 10px;
+	height: 32px;
+	width: 280px;
+}
+
+	.search-wrap:focus-within {
+		border-color: var(--blue);
+		background: var(--white);
+	}
+
+	.search-wrap input {
+		background: none;
+		border: none;
+		outline: none;
+		font-family: inherit;
+		font-size: 12.5px;
+		color: var(--text);
+		width: 100%;
+	}
+
+		.search-wrap input::placeholder {
+			color: var(--text3);
+		}
+
+.topbar-right {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-left: auto;
+}
+
+.btn-primary {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	background: var(--orange);
+	color: #fff;
+	border: none;
+	border-radius: 6px;
+	padding: 6px 14px;
+	font-family: inherit;
+	font-size: 12.5px;
+	font-weight: 600;
+	cursor: pointer;
+	height: 32px;
+	transition: background 0.15s, box-shadow 0.15s;
+	box-shadow: 0 2px 8px rgba(232,98,26,0.30);
+}
+
+	.btn-primary:hover {
+		background: var(--orange-hover);
+		box-shadow: 0 3px 12px rgba(232,98,26,0.40);
+	}
+
+.btn-settings {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	background: var(--white);
+	color: var(--text2);
+	border: 1.5px solid var(--border2);
+	border-radius: 6px;
+	padding: 6px 12px;
+	font-family: inherit;
+	font-size: 12.5px;
+	font-weight: 500;
+	cursor: pointer;
+	height: 32px;
+	transition: border-color 0.15s;
+}
+
+	.btn-settings:hover {
+		border-color: var(--blue);
+		color: var(--blue);
+		background: #f0f2fb;
+	}
+
+.btn-logout {
+	width: 32px;
+	height: 32px;
+	display: grid;
+	place-items: center;
+	background: #fff5f5;
+	border: 1.5px solid #ffd0d0;
+	border-radius: 6px;
+	cursor: pointer;
+	transition: all 0.15s;
+}
+
+	.btn-logout:hover {
+		background: #ffe0e0;
+		border-color: #ffb0b0;
+	}
+
+/* ── Page title ───────────────────────────── */
+.page-title-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 12px 16px 8px;
+	flex-shrink: 0;
+}
+
+.page-title {
+	font-size: 15px;
+	font-weight: 700;
+	color: var(--text);
+}
+
+.btn-refresh {
+	width: 26px;
+	height: 26px;
+	background: var(--white);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	display: grid;
+	place-items: center;
+	cursor: pointer;
+	color: var(--text2);
+	transition: all 0.15s;
+}
+
+	.btn-refresh:hover {
+		border-color: var(--blue);
+		color: var(--blue);
+	}
+
+	.btn-refresh.spinning svg {
+		animation: spin 0.7s linear infinite;
+	}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+/* ── Main / Columns ───────────────────────── */
+.main {
+	flex: 1;
+	padding: 0 16px;
+	overflow: hidden;
+}
+
+.columns {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 14px;
+	height: 100%;
+}
+
+.column {
+	background: var(--white);
+	border-radius: 10px;
+	border: 1.5px solid var(--border);
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	box-shadow: var(--shadow);
+}
+
+.col-connected {
+	border-top: 3px solid var(--blue);
+}
+
+.col-disconnected {
+	border-top: 3px solid var(--orange);
+}
+
+.col-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 11px 16px;
+	border-bottom: 1px solid var(--border);
+	background: #f7f8fd;
+}
+
+.dot {
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+
+.dot-green {
+	background: var(--green);
+	box-shadow: 0 0 0 2px rgba(34,197,94,0.2);
+}
+
+.dot-red {
+	background: var(--orange);
+	box-shadow: 0 0 0 2px rgba(232,98,26,0.2);
+}
+
+.col-title {
+	font-weight: 600;
+	font-size: 13px;
+	color: var(--text);
+}
+
+.cards-area {
+	flex: 1;
+	overflow-y: auto;
+	padding: 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+	.cards-area::-webkit-scrollbar {
+		width: 4px;
+	}
+
+	.cards-area::-webkit-scrollbar-thumb {
+		background: var(--border2);
+		border-radius: 2px;
+	}
+
+/* ── Company Card ─────────────────────────── */
+.card {
+	background: var(--white);
+	border: 1.5px solid var(--border);
+	border-radius: 8px;
+	padding: 12px 14px;
+	transition: box-shadow 0.2s, border-color 0.2s;
+	animation: fadeIn 0.25s ease both;
+}
+
+	.card:hover {
+		border-color: #bcc4e0;
+		box-shadow: var(--shadow2);
+	}
+
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.card-top {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 10px;
+}
+
+.card-icon {
+	width: 34px;
+	height: 34px;
+	border-radius: 7px;
+	background: #f4f6fa;
+	border: 1px solid var(--border);
+	display: grid;
+	place-items: center;
+	color: var(--text3);
+	flex-shrink: 0;
+}
+
+.card-meta {
+	flex: 1;
+	min-width: 0;
+}
+
+.card-name {
+	font-weight: 500;
+	font-size: 12.5px;
+	color: var(--text);
+	line-height: 1.45;
+}
+
+.card-id {
+	font-size: 11.5px;
+	color: var(--text3);
+	margin-top: 1px;
+}
+
+/* card actions row */
+.card-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.card-btns {
+	display: flex;
+	gap: 8px;
+}
+
+.btn-sync {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	border: none;
+	border-radius: 5px;
+	padding: 5px 12px;
+	font-family: inherit;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.15s;
+	height: 28px;
+}
+
+.btn-master {
+	background: var(--orange);
+	color: #fff;
+	box-shadow: 0 1px 4px rgba(232,98,26,0.25);
+}
+
+	.btn-master:hover {
+		background: var(--orange-hover);
+	}
+
+.btn-vouchers {
+	background: #eef1fb;
+	color: var(--blue);
+	border: 1px solid #c0c9ed;
+}
+
+	.btn-vouchers:hover {
+		background: #e4e9f8;
+		border-color: var(--blue);
+	}
+
+.btn-sync.loading {
+	opacity: 0.65;
+	pointer-events: none;
+}
+
+	.btn-sync.loading .spin-icon {
+		animation: spin 0.7s linear infinite;
+	}
+
+.card-sync-date {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11px;
+	color: var(--text3);
+}
+
+/* disconnected */
+.card-pending {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 11.5px;
+	color: var(--orange);
+	font-weight: 600;
+}
+
+/* empty state */
+.empty-state {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	color: var(--text3);
+	font-size: 12px;
+	padding: 40px 20px;
+	text-align: center;
+}
+
+	.empty-state svg {
+		opacity: 0.35;
+	}
+
+/* ── Bottom prompt ────────────────────────── */
+.bottom-prompt {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 16px;
+	background: var(--white);
+	border-top: 2px solid var(--border);
+	font-size: 12.5px;
+	color: var(--text2);
+	flex-shrink: 0;
+}
+
+.btn-yes, .btn-no {
+	border: none;
+	border-radius: 5px;
+	padding: 5px 18px;
+	font-family: inherit;
+	font-size: 12.5px;
+	font-weight: 600;
+	cursor: pointer;
+	height: 28px;
+	transition: all 0.15s;
+}
+
+.btn-yes {
+	background: var(--blue);
+	color: #fff;
+}
+
+	.btn-yes:hover {
+		background: var(--orange-hover);
+	}
+
+.btn-no {
+	background: var(--white);
+	color: var(--text2);
+	border: 1.5px solid var(--border2);
+}
+
+	.btn-no:hover {
+		border-color: var(--blue);
+		color: var(--blue);
+	}
+
+/* ── Status bar ───────────────────────────── */
+.statusbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	height: 36px;
+	background: #1a1d23;
+	padding: 0 16px;
+	font-size: 11.5px;
+	flex-shrink: 0;
+}
+
+.status-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: #cdd1dc;
+}
+
+	.status-item strong {
+		font-weight: 600;
+	}
+
+	.status-item.ok strong {
+		color: var(--green);
+	}
+
+	.status-item.fail strong {
+		color: var(--red);
+	}
+
+.status-version {
+	font-size: 11px;
+	color: #666c7e;
+}
+
+/* ── Toast ────────────────────────────────── */
+.toast {
+	position: fixed;
+	bottom: 44px;
+	left: 50%;
+	transform: translateX(-50%) translateY(6px);
+	background: #1a1d23;
+	color: #fff;
+	border-radius: 6px;
+	padding: 8px 16px;
+	font-size: 12px;
+	opacity: 0;
+	pointer-events: none;
+	transition: all 0.22s;
+	white-space: nowrap;
+	z-index: 999;
+	box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+}
+
+	.toast.show {
+		opacity: 1;
+		transform: translateX(-50%) translateY(0);
+	}
+
+	.toast.success {
+		background: #166534;
+	}
+
+	.toast.error {
+		background: #991b1b;
+	}
+
+/* ── Vyapar-style overrides ───────────────────────── */
+
+/* sync info row below buttons */
+.card-sync-info {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.sync-date-item {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11px;
+	color: var(--text3);
+}
+
+	.sync-date-item strong {
+		color: var(--text2);
+		font-weight: 500;
+	}
+
+/* connected icon tint — green tint like Vyapar */
+.connected-icon {
+	background: #eef1fb !important;
+	border-color: #c0c9ed !important;
+	color: var(--blue) !important;
+}
+
+/* Sync Pending — push to right edge */
+.card-pending {
+	margin-left: auto;
+	flex-shrink: 0;
+}
+
+/* card-top already center-aligned via earlier rule */
+
+/* hint text on disconnected cards */
+.sync-hint {
+	font-style: italic;
+	color: var(--text3);
+	font-size: 10.5px;
+}
+
+/* ═══════════════════════════════════════════════
+   ADD COMPANIES DRAWER
+   ═══════════════════════════════════════════════ */
+
+/* Backdrop — dims the main content */
+.drawer-backdrop {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.35);
+	z-index: 100;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.28s ease;
+}
+
+	.drawer-backdrop.open {
+		opacity: 1;
+		pointer-events: all;
+	}
+
+/* Drawer — slides up from bottom, covers ~55% of screen */
+.drawer {
+	position: fixed;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	height: 58%;
+	background: var(--white);
+	border-radius: 14px 14px 0 0;
+	box-shadow: 0 -6px 40px rgba(0,0,0,0.18);
+	z-index: 101;
+	display: flex;
+	flex-direction: column;
+	transform: translateY(100%);
+	transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+	.drawer.open {
+		transform: translateY(0);
+	}
+
+/* Drag handle visual */
+.drawer-handle {
+	width: 36px;
+	height: 4px;
+	background: var(--border2);
+	border-radius: 2px;
+	margin: 10px auto 0;
+	flex-shrink: 0;
+}
+
+/* Drawer header */
+.drawer-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 12px 18px 10px;
+	border-bottom: 1px solid var(--border);
+	flex-shrink: 0;
+}
+
+.drawer-title-group {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.drawer-title {
+	font-size: 13.5px;
+	font-weight: 700;
+	color: var(--text);
+	margin: 0;
+}
+
+.drawer-subtitle {
+	font-size: 11.5px;
+	color: var(--text3);
+	margin: 2px 0 0;
+}
+
+.drawer-close {
+	width: 30px;
+	height: 30px;
+	display: grid;
+	place-items: center;
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	cursor: pointer;
+	color: var(--text2);
+	flex-shrink: 0;
+	transition: all 0.15s;
+}
+
+	.drawer-close:hover {
+		background: #ffe0e0;
+		border-color: #ffd0d0;
+		color: var(--red);
+	}
+
+/* Drawer search bar */
+.drawer-search-wrap {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 18px;
+	border-bottom: 1px solid var(--border);
+	flex-shrink: 0;
+}
+
+	.drawer-search-wrap input {
+		flex: 1;
+		background: none;
+		border: none;
+		outline: none;
+		font-family: inherit;
+		font-size: 12.5px;
+		color: var(--text);
+	}
+
+		.drawer-search-wrap input::placeholder {
+			color: var(--text3);
+		}
+
+/* Scrollable company list */
+.drawer-list {
+	flex: 1;
+	overflow-y: auto;
+	padding: 8px 0;
+}
+
+	.drawer-list::-webkit-scrollbar {
+		width: 4px;
+	}
+
+	.drawer-list::-webkit-scrollbar-thumb {
+		background: var(--border2);
+		border-radius: 2px;
+	}
+
+/* Each company row in drawer */
+.drawer-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 11px 18px;
+	border-bottom: 1px solid var(--border);
+	animation: fadeIn 0.2s ease both;
+	transition: background 0.12s;
+}
+
+	.drawer-row:last-child {
+		border-bottom: none;
+	}
+
+	.drawer-row:hover {
+		background: #f7f9fc;
+	}
+
+	.drawer-row.already-added {
+		opacity: 0.6;
+	}
+
+.drawer-row-icon {
+	width: 34px;
+	height: 34px;
+	border-radius: 7px;
+	background: #f4f6fa;
+	border: 1px solid var(--border);
+	display: grid;
+	place-items: center;
+	color: var(--text3);
+	flex-shrink: 0;
+}
+
+.drawer-row-meta {
+	flex: 1;
+	min-width: 0;
+}
+
+.drawer-row-name {
+	font-size: 12.5px;
+	font-weight: 500;
+	color: var(--text);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.drawer-row-status {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11px;
+	margin-top: 2px;
+}
+
+	.drawer-row-status.pending {
+		color: var(--text3);
+	}
+
+	.drawer-row-status.already {
+		color: #15803d;
+	}
+
+	.drawer-row-status.syncing {
+		color: var(--orange);
+	}
+
+	.drawer-row-status.error-status {
+		color: var(--red);
+	}
+
+/* Add button on each drawer row */
+.btn-add-company {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	padding: 6px 14px;
+	border-radius: 6px;
+	font-family: inherit;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	height: 30px;
+	flex-shrink: 0;
+	transition: all 0.15s;
+	background: var(--orange);
+	color: #fff;
+	border: none;
+	box-shadow: 0 2px 6px rgba(232,98,26,0.25);
+}
+
+	.btn-add-company:hover {
+		background: var(--orange-hover);
+		box-shadow: 0 3px 10px rgba(232,98,26,0.35);
+	}
+
+	.btn-add-company:disabled {
+		pointer-events: none;
+	}
+
+	.btn-add-company.btn-added {
+		background: #eef1fb;
+		color: var(--blue);
+		border: 1.5px solid #c0c9ed;
+	}
+
+/* Drawer loading / empty / error states */
+.drawer-loading,
+.drawer-empty,
+.drawer-error {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	padding: 40px 20px;
+	font-size: 12.5px;
+	color: var(--text3);
+	text-align: center;
+}
+
+.drawer-error {
+	color: var(--red);
+}
+
+/* ── Extra card styles ──────────────────────────── */
+.card-sync-info {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.sync-date-item {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11px;
+	color: var(--text3);
+}
+
+	.sync-date-item strong {
+		color: var(--text2);
+		font-weight: 500;
+	}
+
+.sync-hint {
+	font-style: italic;
+	font-size: 10.5px;
+}
+
+.connected-icon {
+	background: #eef1fb !important;
+	border-color: #c0c9ed !important;
+	color: var(--blue) !important;
+}
+
+.card-pending {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 11.5px;
+	color: var(--yellow);
+	font-weight: 500;
+	margin-left: auto;
+	flex-shrink: 0;
+}
+
+.card-top {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 10px;
+}
+
+/* "Open in Tally" green badge in drawer */
+.tally-badge {
+	display: inline-flex;
+	align-items: center;
+	background: #dcfce7;
+	color: #15803d;
+	font-size: 10px;
+	font-weight: 600;
+	padding: 1px 6px;
+	border-radius: 4px;
+	border: 1px solid #bbf7d0;
+	margin-right: 3px;
+}
+
+/* "Not open in Tally" status */
+.drawer-row-status.not-in-tally {
+	color: var(--text3);
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+/* Disabled "Open in Tally first" button */
+.btn-add-company.btn-not-in-tally {
+	background: var(--bg);
+	color: var(--text3);
+	border: 1.5px solid var(--border2);
+	cursor: not-allowed;
+	opacity: 0.7;
+}
