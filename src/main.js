@@ -16,6 +16,50 @@ function requireAuth() {
 // ── State ────────────────────────────────────────────────────
 let allCompanies   = [];
 let tallyCompanies = [];
+const selectedFYMap = {};  // company → "20250401|20260331" (persists across re-renders)
+
+// ── FY Period Helpers ────────────────────────────────────
+function getFYOptions() {
+  const now = new Date();
+  const curYear = now.getFullYear();
+  const fyStart = now.getMonth() >= 3 ? curYear : curYear - 1;
+  const options = [];
+  // Show last 5 FYs + current + next
+  for (let y = fyStart - 5; y <= fyStart + 1; y++) {
+    const short = String(y + 1).slice(-2);
+    options.push({
+      label: `FY ${y}-${short}`,
+      from_date: `${y}0401`,
+      to_date:   `${y + 1}0331`,
+      isCurrent: y === fyStart,
+    });
+  }
+  return options;
+}
+
+function buildFYSelect(companyName) {
+  const opts = getFYOptions();
+  const id = `fy-select-${companyName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  const savedVal = selectedFYMap[companyName];
+  let html = `<select class="fy-select" id="${id}" data-company="${companyName}">`;
+  opts.forEach(o => {
+    const val = `${o.from_date}|${o.to_date}`;
+    const isSelected = savedVal ? (val === savedVal) : o.isCurrent;
+    html += `<option value="${val}"${isSelected ? ' selected' : ''}>${o.label}</option>`;
+  });
+  html += '</select>';
+  return html;
+}
+
+function getSelectedFY(companyName) {
+  const id = `fy-select-${companyName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  const sel = document.getElementById(id);
+  if (!sel) return { from_date: '', to_date: '' };
+  const [from_date, to_date] = sel.value.split('|');
+  // Persist the selection so it survives card re-renders
+  selectedFYMap[companyName] = sel.value;
+  return { from_date, to_date };
+}
 
 // ── DOM ──────────────────────────────────────────────────────
 const connectedList    = document.getElementById("connected-list");
@@ -60,17 +104,26 @@ function buildCard(company) {
   if (company.connected) {
     const masterDate  = company.lastMasterSync  || "Never";
     const voucherDate = company.lastVoucherSync || "Never";
+    const isActive = company.activeInTally;
+    const activeBadge = isActive
+      ? `<span class="tally-active-badge active"><svg width="6" height="6" viewBox="0 0 12 12"><circle cx="6" cy="6" r="6" fill="#22c55e"/></svg> Active in Tally</span>`
+      : `<span class="tally-active-badge offline"><svg width="6" height="6" viewBox="0 0 12 12"><circle cx="6" cy="6" r="6" fill="#94a3b8"/></svg> Offline</span>`;
     card.innerHTML = `
       <div class="card-top">
         <div class="card-icon connected-icon">${buildingIcon}</div>
         <div class="card-meta">
           <div class="card-name">${company.name}</div>
         </div>
+        ${activeBadge}
       </div>
       <div class="card-actions">
+        <div class="card-fy-row">
+          <span class="fy-label">Sync Period:</span>
+          ${buildFYSelect(company.name)}
+        </div>
         <div class="card-btns">
-          <button class="btn-sync btn-master" data-action="master" data-company="${company.name}">${syncIcon} Sync Master</button>
-          <button class="btn-sync btn-vouchers" data-action="vouchers" data-company="${company.name}">${voucherIcon} Sync Vouchers</button>
+          <button class="btn-sync btn-master" data-action="master" data-company="${company.name}"${isActive ? '' : ' disabled title="Open this company in Tally to sync"'}>${syncIcon} Sync Master</button>
+          <button class="btn-sync btn-vouchers" data-action="vouchers" data-company="${company.name}"${isActive ? '' : ' disabled title="Open this company in Tally to sync"'}>${voucherIcon} Sync Vouchers</button>
         </div>
         <div class="card-sync-info">
           <span class="sync-date-item">${clockIcon} Masters: <strong>${masterDate}</strong></span>
@@ -296,7 +349,7 @@ async function addCompany(btn) {
       row.classList.add("already-added");
       if (statusEl) {
         statusEl.className = "drawer-row-status already";
-        statusEl.innerHTML = `${checkIcon} ${data.ledgers_synced} ledgers · ${data.vouchers_synced} vouchers`;
+        statusEl.innerHTML = `${checkIcon} ${data.ledgers_synced} ledgers · ${data.stock_items_synced || 0} items · ${data.vouchers_synced} vouchers`;
       }
 
       // Mark in tallyCompanies so filter re-renders correctly
@@ -321,7 +374,7 @@ async function addCompany(btn) {
       // Refresh main view live — new card appears in Connected
       renderCompanies(searchInput.value);
 
-      showToast(`✓ ${company} — ${data.ledgers_synced} ledgers, ${data.vouchers_synced} vouchers`, "success");
+      showToast(`✓ ${company} — ${data.ledgers_synced} ledgers, ${data.stock_items_synced || 0} stock items, ${data.vouchers_synced} vouchers`, "success");
     } else {
       btn.disabled = false;
       btn.innerHTML = `Retry`;
@@ -347,44 +400,205 @@ async function syncMaster(btn) {
   const orig    = btn.innerHTML;
   btn.classList.add("loading");
   btn.innerHTML = `${syncIcon} Syncing…`;
+  const fy = getSelectedFY(company);
+
+  showSyncPanel(company, "master");
+  syncLog(`Starting master sync for ${company} (${fy.from_date}–${fy.to_date})`, "info");
+
+  let totalLedgers = 0;
+  let totalStockItems = 0;
+  let totalErrors = 0;
+
+  // ── Step 1: Fetch group list from Tally ──────────────────────────
+  syncLog("Fetching ledger groups from Tally...", "info");
+  let groups = [];
   try {
-    const res  = await fetch(`${API_BASE}/tally/sync-ledgers?company=${encodeURIComponent(company)}`);
+    const gRes = await fetch(`${API_BASE}/tally/list-groups?company=${encodeURIComponent(company)}`);
+    const gData = await gRes.json();
+    if (gData.ok && gData.groups) {
+      groups = gData.groups.map(g => g.name).filter(Boolean);
+      syncLog(`Found ${groups.length} ledger groups`, "success");
+    } else {
+      syncLog(`Failed to fetch groups: ${gData.error || "unknown"}`, "error");
+      totalErrors++;
+    }
+  } catch (e) {
+    syncLog("Cannot reach Tally for group list", "error");
+    totalErrors++;
+  }
+
+  // ── Step 2: Sync ledgers group-by-group ──────────────────────────
+  // Total steps = groups + 1 (stock items)
+  const totalSteps = groups.length + 1;
+
+  for (let i = 0; i < groups.length; i++) {
+    const groupName = groups[i];
+    updateSyncProgress(i, totalSteps);
+    syncLog(`[${i + 1}/${groups.length}] Syncing ${groupName}...`, "info");
+
+    try {
+      let url = `${API_BASE}/tally/sync-ledgers?company=${encodeURIComponent(company)}&step=ledgers&group=${encodeURIComponent(groupName)}`;
+      if (fy.from_date) url += `&from_date=${fy.from_date}`;
+      if (fy.to_date)   url += `&to_date=${fy.to_date}`;
+
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (data.ok) {
+        const count = data.synced || 0;
+        totalLedgers += count;
+        syncLog(`${groupName}: ${count} ledgers synced`, count > 0 ? "success" : "info");
+      } else {
+        totalErrors++;
+        syncLog(`${groupName}: ${data.error || "failed"}`, "error");
+      }
+    } catch (e) {
+      totalErrors++;
+      syncLog(`${groupName}: Connection error`, "error");
+    }
+  }
+
+  // ── Step 3: Sync stock items ─────────────────────────────────────
+  updateSyncProgress(groups.length, totalSteps);
+  syncLog(`[Stock Items] Syncing stock items (HSN/GST)...`, "info");
+  try {
+    let url = `${API_BASE}/tally/sync-ledgers?company=${encodeURIComponent(company)}&step=stock_items`;
+    if (fy.from_date) url += `&from_date=${fy.from_date}`;
+    if (fy.to_date)   url += `&to_date=${fy.to_date}`;
+
+    const res = await fetch(url);
     const data = await res.json();
     if (data.ok) {
-      showToast(`✓ Synced ${data.synced} ledgers — ${company}`, "success");
-      const idx = allCompanies.findIndex(c => c.name === company);
-      if (idx !== -1) { allCompanies[idx].connected = true; allCompanies[idx].lastMasterSync = data.syncedAt; }
-      renderCompanies(searchInput.value);
+      totalStockItems = data.stock_items_synced || 0;
+      syncLog(`Stock Items: ${totalStockItems} synced`, totalStockItems > 0 ? "success" : "info");
     } else {
-      showToast(`✗ ${data.error}`, "error");
-      btn.classList.remove("loading"); btn.innerHTML = orig;
+      totalErrors++;
+      syncLog(`Stock Items: ${data.error || "failed"}`, "error");
     }
-  } catch {
-    showToast("✗ Could not reach server", "error");
-    btn.classList.remove("loading"); btn.innerHTML = orig;
+  } catch (e) {
+    totalErrors++;
+    syncLog("Stock Items: Connection error", "error");
   }
+
+  // ── Done ─────────────────────────────────────────────────────────
+  updateSyncProgress(totalSteps, totalSteps);
+  document.getElementById("sync-panel").classList.add("done");
+  document.getElementById("sync-panel-label").textContent =
+    `Sync Complete — ${totalLedgers} ledgers, ${totalStockItems} stock items`;
+  syncLog(`Done! ${totalLedgers} ledgers, ${totalStockItems} stock items synced, ${totalErrors} errors`, totalErrors > 0 ? "error" : "success");
+
+  if (totalLedgers > 0 || totalStockItems > 0) {
+    showToast(`✓ Synced ${totalLedgers} ledgers, ${totalStockItems} stock items — ${company}`, "success");
+    const idx = allCompanies.findIndex(c => c.name === company);
+    if (idx !== -1) { allCompanies[idx].connected = true; allCompanies[idx].lastMasterSync = new Date().toLocaleString(); }
+    renderCompanies(searchInput.value);
+  } else {
+    btn.classList.remove("loading");
+    btn.innerHTML = orig;
+  }
+}
+
+const VOUCHER_TYPES = [
+  "Sales", "Purchase", "Receipt", "Payment", "Contra",
+  "Journal", "Credit Note", "Debit Note",
+  "Sales - Automatic", "Purchase - Automatic"
+];
+
+function syncLog(msg, level = "info") {
+  const logs = document.getElementById("sync-logs");
+  const now = new Date().toLocaleTimeString("en-IN", { hour12: false });
+  const icons = { info: "⏳", success: "✅", error: "❌" };
+  logs.innerHTML += `<div class="sync-log-entry ${level}">
+    <span class="sync-log-time">${now}</span>
+    <span class="sync-log-icon">${icons[level] || "·"}</span>
+    <span class="sync-log-msg">${msg}</span>
+  </div>`;
+  logs.scrollTop = logs.scrollHeight;
+}
+
+function showSyncPanel(company, mode = "vouchers") {
+  const panel = document.getElementById("sync-panel");
+  const label = document.getElementById("sync-panel-label");
+  const bar = document.getElementById("sync-progress-bar");
+  const pctText = document.getElementById("sync-progress-text");
+  const logs = document.getElementById("sync-logs");
+  const body = document.getElementById("sync-panel-body");
+
+  const title = mode === "master" ? "Syncing Master Data" : "Syncing Vouchers";
+  panel.style.display = "block";
+  panel.classList.remove("done");
+  body.classList.remove("collapsed");
+  bar.style.width = "0%";
+  pctText.textContent = "0%";
+  logs.innerHTML = "";
+  label.textContent = `${title} — ${company}`;
+
+  // Toggle collapse
+  document.getElementById("sync-panel-toggle").onclick = () => {
+    body.classList.toggle("collapsed");
+  };
+}
+
+function updateSyncProgress(current, total) {
+  const pct = Math.round((current / total) * 100);
+  document.getElementById("sync-progress-bar").style.width = pct + "%";
+  document.getElementById("sync-progress-text").textContent = pct + "%";
 }
 
 async function syncVouchers(btn) {
   const company = btn.dataset.company;
-  const orig    = btn.innerHTML;
+  const orig = btn.innerHTML;
   btn.classList.add("loading");
   btn.innerHTML = `${voucherIcon} Syncing…`;
-  try {
-    const res  = await fetch(`${API_BASE}/tally/sync-vouchers?company=${encodeURIComponent(company)}`);
-    const data = await res.json();
-    if (data.ok) {
-      showToast(`✓ Synced ${data.synced} vouchers — ${company}`, "success");
-      const idx = allCompanies.findIndex(c => c.name === company);
-      if (idx !== -1) { allCompanies[idx].connected = true; allCompanies[idx].lastVoucherSync = data.syncedAt; }
-      renderCompanies(searchInput.value);
-    } else {
-      showToast(`✗ ${data.error}`, "error");
-      btn.classList.remove("loading"); btn.innerHTML = orig;
+  const fy = getSelectedFY(company);
+
+  showSyncPanel(company);
+  syncLog(`Starting voucher sync for ${company} (${fy.from_date}–${fy.to_date})`, "info");
+
+  let totalSynced = 0;
+  let totalErrors = 0;
+
+  for (let i = 0; i < VOUCHER_TYPES.length; i++) {
+    const vtype = VOUCHER_TYPES[i];
+    syncLog(`[${i + 1}/${VOUCHER_TYPES.length}] Syncing ${vtype}...`, "info");
+    updateSyncProgress(i, VOUCHER_TYPES.length);
+
+    try {
+      let url = `${API_BASE}/tally/sync-vouchers?company=${encodeURIComponent(company)}&voucher_type=${encodeURIComponent(vtype)}`;
+      if (fy.from_date) url += `&from_date=${fy.from_date}`;
+      if (fy.to_date) url += `&to_date=${fy.to_date}`;
+
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (data.ok) {
+        const n = data.synced || 0;
+        totalSynced += n;
+        syncLog(`${vtype}: ${n} vouchers synced`, n > 0 ? "success" : "info");
+      } else {
+        totalErrors++;
+        syncLog(`${vtype}: ${data.error || "failed"}`, "error");
+      }
+    } catch (e) {
+      totalErrors++;
+      syncLog(`${vtype}: Connection error`, "error");
     }
-  } catch {
-    showToast("✗ Could not reach server", "error");
-    btn.classList.remove("loading"); btn.innerHTML = orig;
+  }
+
+  updateSyncProgress(VOUCHER_TYPES.length, VOUCHER_TYPES.length);
+  document.getElementById("sync-panel").classList.add("done");
+  document.getElementById("sync-panel-label").textContent =
+    `Sync Complete — ${totalSynced} vouchers (${totalErrors} errors)`;
+  syncLog(`Done! ${totalSynced} total vouchers synced, ${totalErrors} errors`, totalErrors > 0 ? "error" : "success");
+
+  if (totalSynced > 0) {
+    showToast(`✓ Synced ${totalSynced} vouchers — ${company}`, "success");
+    const idx = allCompanies.findIndex(c => c.name === company);
+    if (idx !== -1) { allCompanies[idx].connected = true; allCompanies[idx].lastVoucherSync = new Date().toLocaleString(); }
+    renderCompanies(searchInput.value);
+  } else {
+    btn.classList.remove("loading");
+    btn.innerHTML = orig;
   }
 }
 
@@ -418,6 +632,14 @@ document.addEventListener("click", e => {
   if (btn.dataset.action === "master")      syncMaster(btn);
   if (btn.dataset.action === "vouchers")    syncVouchers(btn);
   if (btn.dataset.action === "add-company") addCompany(btn);
+});
+
+// Persist FY dropdown selection when user changes it
+document.addEventListener("change", e => {
+  if (e.target.classList.contains('fy-select')) {
+    const company = e.target.dataset.company;
+    if (company) selectedFYMap[company] = e.target.value;
+  }
 });
 
 // document.getElementById("add-company-btn").addEventListener("click", openDrawer);

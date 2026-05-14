@@ -1,8 +1,8 @@
 {
 	"$schema": "https://schema.tauri.app/config/2",
-	"productName": "ComplianceAI Expert",
+	"productName": "suvidhaAI",
 	"version": "0.1.0",
-	"identifier": "com.complianceai.expert",
+	"identifier": "com.suvidhaai.connector",
 	"build": {
 		"frontendDist": "../src"
 	},
@@ -10,7 +10,7 @@
 		"withGlobalTauri": true,
 		"windows": [
 			{
-				"title": "ComplianceAI Expert",
+				"title": "suvidhaAI",
 				"url": "index.html",
 				"width": 1280,
 				"height": 800,

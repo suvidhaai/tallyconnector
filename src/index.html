@@ -3,7 +3,7 @@
 <head>
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>ComplianceAI Expert</title>
+	<title>suvidhaAI</title>
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 	<link rel="stylesheet" href="styles.css" />
@@ -13,8 +13,8 @@
 	<!-- TOP NAV -->
 	<header class="topbar">
 		<div class="topbar-left">
-			<div class="app-logo">CE</div>
-			<span class="app-name">ComplianceAI Expert</span>
+			<div class="app-logo">SA</div>
+			<span class="app-name">suvidhaAI</span>
 		</div>
 		<div class="topbar-center">
 			<div class="search-wrap">
@@ -71,6 +71,26 @@
 		<button class="btn-yes">Yes</button>
 		<button class="btn-no">No</button>
 	</div>-->
+
+	<!-- SYNC PROGRESS PANEL -->
+	<div class="sync-panel" id="sync-panel" style="display:none;">
+		<div class="sync-panel-header">
+			<div class="sync-panel-title">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+				<span id="sync-panel-label">Sync Progress</span>
+			</div>
+			<button class="sync-panel-toggle" id="sync-panel-toggle" title="Toggle panel">▼</button>
+		</div>
+		<div class="sync-panel-body" id="sync-panel-body">
+			<div class="sync-progress-row">
+				<div class="sync-progress-bar-wrap">
+					<div class="sync-progress-bar" id="sync-progress-bar" style="width:0%"></div>
+				</div>
+				<span class="sync-progress-text" id="sync-progress-text">0%</span>
+			</div>
+			<div class="sync-logs" id="sync-logs"></div>
+		</div>
+	</div>
 
 	<!-- STATUS BAR -->
 	<footer class="statusbar">
