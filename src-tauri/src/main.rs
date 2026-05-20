@@ -232,7 +232,7 @@ fn parse_rate(s: &str) -> Option<f64> {
 
 fn parse_inventory_entries_from_voucher_xml(voucher_xml: &str) -> Vec<InventoryEntryRow> {
     let mut entries = Vec::new();
-    for list_tag in &["ALLINVENTORYENTRIES.LIST", "INVENTORYENTRIES.LIST"] {
+    for list_tag in &["ALLINVENTORYENTRIES.LIST", "INVENTORYENTRIES.LIST", "INVENTORYALLOCATIONS.LIST"] {
         let open_tag  = format!("<{}", list_tag);
         let close_tag = format!("</{}>", list_tag);
         let mut search_from = 0;
@@ -670,16 +670,21 @@ fn voucher_export_xml(company: &str, from_date: &str, to_date: &str, voucher_typ
       <TDL>
         <TDLMESSAGE>
           <COLLECTION NAME="AllVouchers" ISMODIFY="No">
-            <TYPE>Voucher</TYPE>{filter_tag}
-            <NATIVEMETHOD>Date</NATIVEMETHOD>
-            <NATIVEMETHOD>VoucherTypeName</NATIVEMETHOD>
-            <NATIVEMETHOD>VoucherNumber</NATIVEMETHOD>
-            <NATIVEMETHOD>PartyLedgerName</NATIVEMETHOD>
-            <NATIVEMETHOD>Amount</NATIVEMETHOD>
-            <NATIVEMETHOD>Narration</NATIVEMETHOD>
-            <NATIVEMETHOD>GUID</NATIVEMETHOD>
-            <NATIVEMETHOD>AlterID</NATIVEMETHOD>
-          </COLLECTION>{system_tag}
+            <TYPE>Voucher</TYPE>
+            <FILTER>DateFromFilter</FILTER>
+            <FILTER>DateToFilter</FILTER>{filter_tag}
+            <NATIVEMETHOD>*</NATIVEMETHOD>
+            <NATIVEMETHOD>AllLedgerEntries</NATIVEMETHOD>
+            <NATIVEMETHOD>AllInventoryEntries</NATIVEMETHOD>
+            <NATIVEMETHOD>LedgerEntries</NATIVEMETHOD>
+            <NATIVEMETHOD>InventoryEntries</NATIVEMETHOD>
+            <FETCH>AllLedgerEntries</FETCH>
+            <FETCH>AllInventoryEntries</FETCH>
+            <FETCH>LedgerEntries</FETCH>
+            <FETCH>InventoryEntries</FETCH>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="DateFromFilter">$Date >= $$Date:"{from_date}"</SYSTEM>
+          <SYSTEM TYPE="Formulae" NAME="DateToFilter">NOT $Date > $$Date:"{to_date}"</SYSTEM>{system_tag}
         </TDLMESSAGE>
       </TDL>
     </DESC>
@@ -971,6 +976,8 @@ async fn main() {
     });
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -1733,45 +1740,146 @@ async fn sync_vouchers(
     let mut total_fetched = 0usize;
     let mut errors = 0usize;
 
+    let start_date = chrono::NaiveDate::parse_from_str(&from_date, "%Y%m%d")
+        .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap());
+    let end_date = chrono::NaiveDate::parse_from_str(&to_date, "%Y%m%d")
+        .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2027, 3, 31).unwrap());
+
     for (i, vtype) in voucher_types.iter().enumerate() {
         eprintln!("  [{}/{}] Syncing {} vouchers...", i+1, voucher_types.len(), vtype);
-        let xml = voucher_export_xml(&company, &from_date, &to_date, Some(vtype));
-        let cleaned = match tally_request(&xml).await {
-            Ok(x) => x,
-            Err(e) => {
-                eprintln!("    {} error: {}", vtype, e);
-                errors += 1;
-                tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
-                continue;
+        let mut current_start = start_date;
+        while current_start <= end_date {
+            let mut current_end = current_start + chrono::Duration::days(30);
+            if current_end > end_date {
+                current_end = end_date;
             }
-        };
-
-        let envelope: TallyEnvelope = match from_str(&cleaned) {
-            Ok(e) => e,
-            Err(_) => { continue; }
-        };
-
-        let vouchers = extract_vouchers(&envelope);
-        if !vouchers.is_empty() {
-            let chunk_rows: Vec<VoucherRow> = vouchers.iter().map(|v| {
-                VoucherRow {
-                    date:           v.date.clone(),
-                    voucher_type:   v.voucher_type.clone(),
-                    voucher_number: v.voucher_number.clone(),
-                    party_name:     v.party_name.clone(),
-                    amount:         parse_balance(&v.amount),
-                    narration:      v.narration.clone(),
-                    guid:           v.guid.clone(),
-                    alter_id:       v.alter_id.clone(),
-                    ledger_entries: vec![],
+            
+            let chunk_from = current_start.format("%Y%m%d").to_string();
+            let chunk_to = current_end.format("%Y%m%d").to_string();
+            
+            eprintln!("    Chunk {} to {}: Fetching {}...", chunk_from, chunk_to, vtype);
+            
+            let xml = voucher_export_xml(&company, &chunk_from, &chunk_to, Some(vtype));
+            let cleaned = match tally_request(&xml).await {
+                Ok(x) => x,
+                Err(e) => {
+                    eprintln!("    Error in chunk {}..{}: {}", chunk_from, chunk_to, e);
+                    current_start = current_end + chrono::Duration::days(1);
+                    continue;
                 }
-            }).collect();
-            let n = chunk_rows.len();
-            total_fetched += n;
-            eprintln!("    {} → {} vouchers ({} bytes)", vtype, n, cleaned.len());
-            all_rows.extend(chunk_rows);
-        } else {
-            eprintln!("    {} → 0 vouchers", vtype);
+            };
+
+            let envelope: TallyEnvelope = match from_str(&cleaned) {
+                Ok(e) => e,
+                Err(_) => { 
+                    current_start = current_end + chrono::Duration::days(1);
+                    continue; 
+                }
+            };
+
+            let vouchers = extract_vouchers(&envelope);
+            if !vouchers.is_empty() {
+                let chunk_rows: Vec<VoucherRow> = vouchers.iter().map(|v| {
+                    VoucherRow {
+                        date:           v.date.clone(),
+                        voucher_type:   v.voucher_type.clone(),
+                        voucher_number: v.voucher_number.clone(),
+                        party_name:     v.party_name.clone(),
+                        amount:         parse_balance(&v.amount),
+                        narration:      v.narration.clone(),
+                        guid:           v.guid.clone(),
+                        alter_id:       v.alter_id.clone(),
+                        ledger_entries: vec![],
+                    }
+                }).collect();
+                
+                let n = chunk_rows.len();
+                eprintln!("    {} vouchers found in chunk", n);
+                
+                // Upsert vouchers
+                let http = make_http();
+                let sb_rows: Vec<serde_json::Value> = chunk_rows.iter().map(|v| {
+                    let guid = if v.guid.is_empty() {
+                        format!("{}-{}-{}-{}", company, v.date, v.voucher_type, v.voucher_number)
+                    } else { v.guid.clone() };
+                    json!({
+                        "company_name":   company,
+                        "date":           v.date,
+                        "voucher_type":   v.voucher_type,
+                        "voucher_number": v.voucher_number,
+                        "party_name":     v.party_name,
+                        "amount":         v.amount,
+                        "narration":      v.narration,
+                        "guid":           guid,
+                        "alter_id":       v.alter_id,
+                    })
+                }).collect();
+
+                for chunk in sb_rows.chunks(500) {
+                    let _ = supabase_upsert(&http, "vouchers", "guid", &chunk.to_vec()).await;
+                }
+
+                // Parse and upsert ledger entries for this chunk
+                let mut all_ledger_entries = Vec::new();
+                let mut all_inventory_entries = Vec::new();
+                
+                for v in &chunk_rows {
+                    if v.guid.is_empty() { continue; }
+                    
+                    // Parse ledger entries
+                    let entries = parse_ledger_entries_for_guid(&cleaned, &v.guid);
+                    for (i, entry) in entries.iter().enumerate() {
+                        all_ledger_entries.push(json!({
+                            "company_name": company,
+                            "voucher_guid": v.guid,
+                            "entry_index":  i as i64,
+                            "voucher_date": v.date,
+                            "voucher_type": v.voucher_type,
+                            "ledger_name":  entry.ledger_name,
+                            "amount":       entry.amount,
+                            "is_debit":     entry.is_debit,
+                        }));
+                    }
+                    
+                    // Parse inventory entries
+                    let inv_entries = parse_inventory_entries_for_guid(&cleaned, &v.guid);
+                    for (i, entry) in inv_entries.iter().enumerate() {
+                        all_inventory_entries.push(json!({
+                            "company_name": company,
+                            "voucher_guid": v.guid,
+                            "voucher_date": v.date,
+                            "voucher_type": v.voucher_type,
+                            "stock_item_name": entry.stock_item_name,
+                            "quantity":     entry.quantity,
+                            "rate":         entry.rate,
+                            "amount":       entry.amount,
+                            "uom":          entry.uom,
+                            "godown":       entry.godown,
+                            "batch":        entry.batch,
+                        }));
+                    }
+                }
+
+                if !all_ledger_entries.is_empty() {
+                    eprintln!("    -> Upserting {} ledger entries", all_ledger_entries.len());
+                    let _ = supabase_upsert(&http, "voucher_entries", "company_name,voucher_guid,entry_index", &all_ledger_entries).await;
+                }
+                
+                if !all_inventory_entries.is_empty() {
+                    eprintln!("    -> Upserting {} inventory entries", all_inventory_entries.len());
+                    if let Err(e) = supabase_upsert(&http, "voucher_inventory_entries", "company_name,voucher_guid,stock_item_name,quantity,amount", &all_inventory_entries).await {
+                        eprintln!("    !! Inventory upsert FAILED: {}", e);
+                    }
+                } else {
+                    eprintln!("    -> No inventory entries found in this chunk");
+                }
+
+                total_fetched += n;
+                all_rows.extend(chunk_rows);
+            }
+            
+            current_start = current_end + chrono::Duration::days(1);
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
 
         // Pause between types to avoid overwhelming Tally
@@ -1786,36 +1894,7 @@ async fn sync_vouchers(
     let count = all_rows.len();
     let sync_time = now_str();
 
-    if count > 0 {
-        let http = make_http();
 
-        let sb_rows: Vec<serde_json::Value> = all_rows.iter().map(|v| {
-            let guid = if v.guid.is_empty() {
-                format!("{}-{}-{}-{}", company, v.date, v.voucher_type, v.voucher_number)
-            } else { v.guid.clone() };
-            json!({
-                "company_name":   company,
-                "date":           v.date,
-                "voucher_type":   v.voucher_type,
-                "voucher_number": v.voucher_number,
-                "party_name":     v.party_name,
-                "amount":         v.amount,
-                "narration":      v.narration,
-                "guid":           guid,
-                "alter_id":       v.alter_id,
-            })
-        }).collect();
-
-        for chunk in sb_rows.chunks(500) {
-            if let Err(e) = supabase_upsert(&http, "vouchers", "guid", &chunk.to_vec()).await {
-                eprintln!("Warning: vouchers upsert failed: {}", e);
-            }
-        }
-
-        // Note: Ledger entries and inventory entries are not included in the
-        // lightweight query. They can be fetched separately if needed.
-        eprintln!("sync_vouchers: upserted {} vouchers (ledger/inventory entries skipped for performance)", count);
-    }
 
     // ── Clean up vouchers deleted from Tally ─────────────────────────────
     if count > 0 {
@@ -2111,39 +2190,81 @@ async fn debug_stock_items() -> impl IntoResponse {
 // ── GET /tally/debug-vouchers ────────────────────────────────────────────────
 // FIX: was hardcoded to wrong company — now uses currently open company in Tally
 
-async fn debug_vouchers() -> impl IntoResponse {
-    // Step 1: Get the currently open company from Tally
-    let company_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+async fn debug_vouchers(
+    Query(params): Query<VoucherQuery>,
+) -> impl IntoResponse {
+    // Step 1: Get company from params or auto-detect
+    let company = match params.company {
+        Some(c) if !c.is_empty() => c,
+        _ => {
+            let company_xml = r#"<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Companies</ID></HEADER>
   <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY>
 </ENVELOPE>"#;
 
-    let company = match tally_request(company_xml).await {
-        Ok(xml) => {
-            let names = extract_company_names(&xml);
-            names.into_iter().next().unwrap_or_default()
-        },
-        Err(e) => return (StatusCode::BAD_GATEWAY, [("Content-Type", "application/json")],
-            json!({ "ok": false, "error": format!("Could not detect open company: {}", e) }).to_string()),
+            match tally_request(company_xml).await {
+                Ok(xml) => {
+                    let names = extract_company_names(&xml);
+                    names.into_iter().next().unwrap_or_default()
+                },
+                Err(e) => return (StatusCode::BAD_GATEWAY, [("Content-Type", "text/xml")], format!("<error>Could not detect open company: {}</error>", e)),
+            }
+        }
     };
 
     if company.is_empty() {
-        return (StatusCode::BAD_GATEWAY, [("Content-Type", "application/json")],
-            json!({ "ok": false, "error": "No company open in Tally" }).to_string());
+        return (StatusCode::BAD_GATEWAY, [("Content-Type", "text/xml")], "<error>No company open in Tally</error>".to_string());
     }
 
-    // Step 2: Fetch one day of vouchers to inspect structure
+    // Step 2: Fetch vouchers for requested period
     let today = Local::now().format("%Y%m%d").to_string();
-    let xml = voucher_export_xml(&company, &today, &today, None);
+    let from_date = params.from_date.unwrap_or(today.clone());
+    let to_date = params.to_date.unwrap_or(today);
+    
+    let xml = format!(r#"<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>DebugVouchers</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        {cvar}
+        <SVFROMDATE>{from_date}</SVFROMDATE>
+        <SVTODATE>{to_date}</SVTODATE>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="DebugVouchers" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FILTER>DateFromFilter</FILTER>
+            <FILTER>DateToFilter</FILTER>
+            <NATIVEMETHOD>*</NATIVEMETHOD>
+            <NATIVEMETHOD>AllLedgerEntries</NATIVEMETHOD>
+            <NATIVEMETHOD>AllInventoryEntries</NATIVEMETHOD>
+            <NATIVEMETHOD>LedgerEntries</NATIVEMETHOD>
+            <NATIVEMETHOD>InventoryEntries</NATIVEMETHOD>
+            <FETCH>AllLedgerEntries</FETCH>
+            <FETCH>AllInventoryEntries</FETCH>
+            <FETCH>LedgerEntries</FETCH>
+            <FETCH>InventoryEntries</FETCH>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="DateFromFilter">$Date >= $$Date:"{from_date}"</SYSTEM>
+          <SYSTEM TYPE="Formulae" NAME="DateToFilter">NOT $Date > $$Date:"{to_date}"</SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"#, cvar = company_var(&company), from_date = from_date, to_date = to_date);
+
     match tally_request(&xml).await {
-        Ok(r) => {
-            let preview = &r[..r.len().min(2000)];
-            (StatusCode::OK, [("Content-Type", "application/json")],
-                json!({ "ok": true, "company": company, "date": today, "xml_preview": preview }).to_string())
-        },
-        Err(e) => (StatusCode::BAD_GATEWAY, [("Content-Type", "application/json")],
-            json!({ "ok": false, "error": e }).to_string()),
+        Ok(r) => (StatusCode::OK, [("Content-Type", "text/plain")], r),
+        Err(e) => (StatusCode::BAD_GATEWAY, [("Content-Type", "text/plain")], format!("<error>{}</error>", e)),
     }
 }
 
@@ -2161,47 +2282,42 @@ async fn available_companies(
 
     let http = make_http();
 
-    let user_id = match http.get(format!("{}/auth/v1/user", SUPABASE_URL))
-        .header("apikey", SUPABASE_KEY)
+    // 1. Get user details from production backend auth/me directly
+    let backend_url = "https://ca-copilot-mrwj.onrender.com/api/v1/auth/me".to_string();
+    let response = http.get(&backend_url)
         .header("Authorization", format!("Bearer {}", token))
-        .send().await
-    {
+        .send().await;
+
+    let user_data = match response {
         Ok(r) => {
+            let status = r.status();
             let text = r.text().await.unwrap_or_default();
+            if !status.is_success() {
+                return (StatusCode::UNAUTHORIZED, [("Content-Type", "application/json")],
+                    json!({ "ok": false, "error": "Invalid or expired session. Please log in again." }).to_string());
+            }
             match serde_json::from_str::<serde_json::Value>(&text) {
-                Ok(v) => match v["id"].as_str() {
-                    Some(id) => id.to_string(),
-                    None => return (StatusCode::UNAUTHORIZED, [("Content-Type", "application/json")],
-                        json!({ "ok": false, "error": "Invalid or expired session." }).to_string()),
-                },
+                Ok(v) => v,
                 Err(_) => return (StatusCode::UNAUTHORIZED, [("Content-Type", "application/json")],
-                    json!({ "ok": false, "error": "Could not verify session." }).to_string()),
+                    json!({ "ok": false, "error": "Failed to parse session response from backend." }).to_string()),
             }
         },
         Err(e) => return (StatusCode::BAD_GATEWAY, [("Content-Type", "application/json")],
             json!({ "ok": false, "error": format!("Auth service unreachable: {}", e) }).to_string()),
     };
 
-    let firm_id = match http.get(format!("{}/rest/v1/users?select=firm_id&user_id=eq.{}&limit=1", SUPABASE_URL, user_id))
-        .header("apikey", SUPABASE_KEY)
-        .header("Authorization", format!("Bearer {}", SUPABASE_KEY))
-        .header("Content-Type", "application/json")
-        .send().await
-    {
-        Ok(r) => {
-            let text = r.text().await.unwrap_or_default();
-            match serde_json::from_str::<Vec<serde_json::Value>>(&text) {
-                Ok(rows) if !rows.is_empty() => {
-                    rows[0]["firm_id"].as_str().map(|s| s.to_string())
-                        .or_else(|| rows[0]["firm_id"].as_i64().map(|n| n.to_string()))
-                        .unwrap_or_default()
-                },
-                _ => return (StatusCode::FORBIDDEN, [("Content-Type", "application/json")],
-                    json!({ "ok": false, "error": "User not found in users table." }).to_string()),
-            }
-        },
-        Err(e) => return (StatusCode::BAD_GATEWAY, [("Content-Type", "application/json")],
-            json!({ "ok": false, "error": format!("Database unreachable: {}", e) }).to_string()),
+    let user_id = match user_data["id"].as_str() {
+        Some(id) => id.to_string(),
+        None => return (StatusCode::UNAUTHORIZED, [("Content-Type", "application/json")],
+            json!({ "ok": false, "error": "User ID missing from session response." }).to_string()),
+    };
+
+    let firm_id = match user_data["firm_id"].as_str() {
+        Some(fid) => fid.to_string(),
+        None => match user_data["firm_id"].as_i64() {
+            Some(fid) => fid.to_string(),
+            None => "".to_string(),
+        }
     };
 
     let db_clients: Vec<(String, String)> = match http

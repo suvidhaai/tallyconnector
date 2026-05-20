@@ -699,3 +699,198 @@ document.querySelector(".btn-logout").addEventListener("click", async () => {
 checkTallyHealth();
 loadCompanies();
 setInterval(checkTallyHealth, 15000);
+
+// ═══════════════════════════════════════════════════════
+// AUTO-UPDATE CHECK (runs on every launch)
+// ═══════════════════════════════════════════════════════
+
+async function checkForAppUpdates() {
+  // Only runs inside Tauri — skip if opened in regular browser
+  if (!window.__TAURI__) return;
+
+  try {
+    const { check } = window.__TAURI__.updater;
+    const { relaunch } = window.__TAURI__.process;
+
+    console.log('[Updater] Checking for updates...');
+    const update = await check();
+
+    if (!update) {
+      console.log('[Updater] App is up to date');
+      return;
+    }
+
+    console.log(`[Updater] Update available: v${update.version}`);
+
+    // Build the update modal
+    showUpdateModal({
+      currentVersion: update.currentVersion,
+      newVersion: update.version,
+      notes: update.body || '',
+      date: update.date || '',
+      onUpdate: async () => {
+        const modal = document.getElementById('update-modal');
+        const body = modal.querySelector('.update-modal-body');
+        const actions = modal.querySelector('.update-modal-actions');
+
+        // Switch to download progress view
+        body.innerHTML = `
+          <div style="text-align:center;padding:1.5rem 0">
+            <div style="font-size:2rem;margin-bottom:.75rem">⬇️</div>
+            <div style="font-weight:700;color:#0f172a;margin-bottom:.5rem">Downloading update…</div>
+            <div style="background:#f1f5f9;border-radius:8px;height:8px;overflow:hidden;margin:.75rem 0">
+              <div id="update-progress-bar" style="height:100%;background:linear-gradient(90deg,#3b82f6,#1e40af);border-radius:8px;width:0%;transition:width .3s"></div>
+            </div>
+            <div id="update-progress-text" style="font-size:.75rem;color:#64748b">Starting download…</div>
+          </div>`;
+        actions.innerHTML = '';
+
+        try {
+          let downloaded = 0;
+          let contentLength = 0;
+          await update.downloadAndInstall((event) => {
+            switch (event.event) {
+              case 'Started':
+                contentLength = event.data.contentLength || 0;
+                break;
+              case 'Progress':
+                downloaded += event.data.chunkLength || 0;
+                const pct = contentLength > 0 ? Math.round((downloaded / contentLength) * 100) : 0;
+                const bar = document.getElementById('update-progress-bar');
+                const text = document.getElementById('update-progress-text');
+                if (bar) bar.style.width = pct + '%';
+                if (text) {
+                  const mb = (downloaded / 1048576).toFixed(1);
+                  const totalMb = contentLength > 0 ? (contentLength / 1048576).toFixed(1) : '?';
+                  text.textContent = `${mb} MB / ${totalMb} MB (${pct}%)`;
+                }
+                break;
+              case 'Finished':
+                break;
+            }
+          });
+
+          // Download complete — show restart prompt
+          body.innerHTML = `
+            <div style="text-align:center;padding:1.5rem 0">
+              <div style="font-size:2.5rem;margin-bottom:.75rem">✅</div>
+              <div style="font-weight:800;color:#059669;font-size:1.05rem;margin-bottom:.35rem">Update Installed!</div>
+              <div style="font-size:.82rem;color:#64748b">Restart the app to use the new version.</div>
+            </div>`;
+          actions.innerHTML = `
+            <button id="update-restart-btn" style="padding:.65rem 2rem;background:linear-gradient(135deg,#059669,#047857);color:#fff;border:none;border-radius:10px;font-weight:700;font-size:.85rem;cursor:pointer;font-family:inherit;transition:all .15s">
+              🔄 Restart Now
+            </button>`;
+          document.getElementById('update-restart-btn').onclick = async () => {
+            await relaunch();
+          };
+
+        } catch (err) {
+          console.error('[Updater] Download failed:', err);
+          body.innerHTML = `
+            <div style="text-align:center;padding:1.5rem 0">
+              <div style="font-size:2rem;margin-bottom:.75rem">❌</div>
+              <div style="font-weight:700;color:#dc2626;margin-bottom:.35rem">Update Failed</div>
+              <div style="font-size:.82rem;color:#64748b">${err.message || 'Download error occurred'}</div>
+            </div>`;
+          actions.innerHTML = `
+            <button onclick="document.getElementById('update-modal-overlay').remove()" style="padding:.5rem 1.5rem;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;font-weight:600;font-size:.82rem;cursor:pointer;font-family:inherit;color:#64748b">Close</button>`;
+        }
+      },
+      onSkip: () => {
+        // User chose to skip — just close modal
+        const overlay = document.getElementById('update-modal-overlay');
+        if (overlay) overlay.remove();
+      }
+    });
+
+  } catch (err) {
+    // Silently fail — don't block the app if update check fails
+    console.warn('[Updater] Update check failed (non-fatal):', err);
+  }
+}
+
+function showUpdateModal({ currentVersion, newVersion, notes, date, onUpdate, onSkip }) {
+  // Remove existing overlay if any
+  const existing = document.getElementById('update-modal-overlay');
+  if (existing) existing.remove();
+
+  // Parse markdown-ish release notes to simple HTML
+  const notesHtml = notes
+    ? notes.split('\n').map(line => {
+        line = line.trim();
+        if (!line) return '';
+        if (line.startsWith('### ')) return `<div style="font-weight:700;margin-top:.5rem;color:#0f172a">${line.slice(4)}</div>`;
+        if (line.startsWith('## '))  return `<div style="font-weight:700;margin-top:.5rem;color:#0f172a">${line.slice(3)}</div>`;
+        if (line.startsWith('- '))   return `<div style="padding-left:.75rem;position:relative"><span style="position:absolute;left:0">•</span>${line.slice(2)}</div>`;
+        if (line.startsWith('* '))   return `<div style="padding-left:.75rem;position:relative"><span style="position:absolute;left:0">•</span>${line.slice(2)}</div>`;
+        return `<div>${line}</div>`;
+      }).join('')
+    : '<div style="color:#94a3b8">No release notes available</div>';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'update-modal-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);backdrop-filter:blur(4px);z-index:99999;display:flex;align-items:center;justify-content:center;animation:fadeIn .2s ease';
+
+  overlay.innerHTML = `
+    <div id="update-modal" style="background:#fff;border-radius:16px;box-shadow:0 25px 50px rgba(0,0,0,.25);max-width:440px;width:90%;overflow:hidden;animation:slideUp .3s ease;font-family:'Inter','Segoe UI',sans-serif">
+      <!-- Header -->
+      <div style="padding:1.25rem 1.5rem;background:linear-gradient(135deg,#1e3a8a,#3b82f6);color:#fff">
+        <div style="display:flex;align-items:center;gap:.65rem">
+          <div style="width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;font-size:1.25rem;flex-shrink:0">🚀</div>
+          <div>
+            <div style="font-weight:800;font-size:1rem;letter-spacing:-.01em">Update Available</div>
+            <div style="font-size:.72rem;opacity:.8;margin-top:2px">A new version of SuvidhaAI Connector is ready</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Version badges -->
+      <div style="padding:.85rem 1.5rem;display:flex;align-items:center;gap:.5rem;border-bottom:1px solid #f1f5f9">
+        <span style="font-size:.7rem;font-weight:700;padding:.2rem .55rem;border-radius:6px;background:#fef2f2;color:#dc2626">v${currentVersion || '?'}</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+        <span style="font-size:.7rem;font-weight:700;padding:.2rem .55rem;border-radius:6px;background:#ecfdf5;color:#059669">v${newVersion}</span>
+        ${date ? `<span style="font-size:.65rem;color:#94a3b8;margin-left:auto">${new Date(date).toLocaleDateString('en-IN', {day:'numeric',month:'short',year:'numeric'})}</span>` : ''}
+      </div>
+
+      <!-- Body (notes) -->
+      <div class="update-modal-body" style="padding:1rem 1.5rem;max-height:200px;overflow-y:auto">
+        <div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;margin-bottom:.4rem">What's New</div>
+        <div style="font-size:.82rem;color:#334155;line-height:1.6">${notesHtml}</div>
+      </div>
+
+      <!-- Actions -->
+      <div class="update-modal-actions" style="padding:1rem 1.5rem;border-top:1px solid #f1f5f9;display:flex;align-items:center;justify-content:flex-end;gap:.5rem">
+        <button id="update-skip-btn" style="padding:.55rem 1.25rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;font-weight:600;font-size:.82rem;cursor:pointer;font-family:inherit;color:#64748b;transition:all .15s">
+          Later
+        </button>
+        <button id="update-now-btn" style="padding:.55rem 1.5rem;background:linear-gradient(135deg,#3b82f6,#1e40af);color:#fff;border:none;border-radius:9px;font-weight:700;font-size:.82rem;cursor:pointer;font-family:inherit;transition:all .15s;box-shadow:0 2px 8px rgba(59,130,246,.3)">
+          ✨ Update Now
+        </button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  // Wire up buttons
+  document.getElementById('update-skip-btn').onclick = onSkip;
+  document.getElementById('update-now-btn').onclick = onUpdate;
+
+  // Close on backdrop click
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) onSkip();
+  });
+}
+
+// Add animation keyframes
+(function() {
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  `;
+  document.head.appendChild(style);
+})();
+
+// Check for updates 2 seconds after load (non-blocking)
+setTimeout(checkForAppUpdates, 2000);

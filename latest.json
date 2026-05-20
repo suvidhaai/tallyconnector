@@ -1,0 +1,11 @@
+{
+  "version": "1.3.0",
+  "notes": "### What's New\n- Auto-update support — you'll be prompted when new versions are available\n- Fixed ledger sync for large datasets (7000+ ledgers)\n- Improved voucher type filtering\n- Performance improvements for master data sync",
+  "pub_date": "2026-05-16T18:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUSGRWKzNKc0xQME15VWlKL3ovRDlUZ09hdE9wVlE3Wm9hT3JnaG4xcXIxajBlWjBSWDIva0NUSCtTdUVuZFNBbHMvOVlLbUNESm4zaVFsV3ZJdkhGYUNtdUZNeHlUcHc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc4OTI1NjkyCWZpbGU6c3V2aWRoYUFJXzEuMy4wX3g2NC1zZXR1cC5leGUKOTg4Y1JiSHZWcVFnOThVTUpHdlFXSWNBREp5ZjJyK0ZVYVZvUFdKMlVaS25LNGlpeWVZd2ExV1NzQlZqSDZJMFBQRkVoU2FuMWxDaHRvZFRqR2pyQXc9PQo=",
+      "url": "https://github.com/teamsuvidhaai/tallyconnector/releases/download/v1.3.0/suvidhaAI_1.3.0_x64-setup.exe"
+    }
+  }
+}

@@ -588,34 +588,51 @@
 		loginBtn.classList.add("loading");
 
 		try {
-		const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-		method: "POST",
-		headers: {
-		"Content-Type": "application/json",
-		"apikey": SUPABASE_KEY,
-		},
-		body: JSON.stringify({ email, password }),
-		});
+			let backendBase = "https://ca-copilot-mrwj.onrender.com/api/v1";
+			const formData = new URLSearchParams();
+			formData.append('username', email);
+			formData.append('password', password);
+			const loginRes = await fetch(`${backendBase}/auth/login`, {
+				method: "POST",
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: formData,
+			});
 
-		const data = await res.json();
+			const loginData = await loginRes.json();
 
-		if (!res.ok || data.error) {
-		showError(data.error_description || data.msg || "Invalid email or password.");
-		loginBtn.classList.remove("loading");
-		return;
-		}
+			if (!loginRes.ok || loginData.error) {
+				showError(loginData.detail || "Invalid email or password.");
+				loginBtn.classList.remove("loading");
+				return;
+			}
 
-		// Store session
-		sessionStorage.setItem("sb_access_token",  data.access_token);
-		sessionStorage.setItem("sb_refresh_token", data.refresh_token);
-		sessionStorage.setItem("sb_user_email",    data.user?.email || email);
+			// Get user details
+			const meRes = await fetch(`${backendBase}/auth/me`, {
+				method: "GET",
+				headers: {
+					"Authorization": `Bearer ${loginData.access_token}`
+				}
+			});
+			const meData = await meRes.json();
 
-		// Navigate to main app
-		window.location.href = "index.html";
+			if (!meRes.ok) {
+				showError("Failed to fetch profile details.");
+				loginBtn.classList.remove("loading");
+				return;
+			}
 
-		} catch {
-		showError("Could not connect. Check your internet connection.");
-		loginBtn.classList.remove("loading");
+			// Store session
+			sessionStorage.setItem("sb_access_token",  loginData.access_token);
+			sessionStorage.setItem("sb_refresh_token", "");
+			sessionStorage.setItem("sb_user_email",    meData.email || email);
+
+			// Navigate to main app
+			window.location.href = "index.html";
+
+		} catch (error) {
+			console.error("Login error:", error);
+			showError("Could not connect. Check your internet connection.");
+			loginBtn.classList.remove("loading");
 		}
 		}
 
