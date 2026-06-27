@@ -441,7 +441,8 @@ async function syncMaster(btn) {
     syncLog(`[${i + 1}/${groups.length}] Syncing ${groupName}...`, "info");
 
     try {
-      let url = `${API_BASE}/tally/sync-ledgers?company=${encodeURIComponent(company)}&step=ledgers&group=${encodeURIComponent(groupName)}`;
+      const clientId = sessionStorage.getItem("selectedClientId") || "";
+      let url = `${API_BASE}/tally/sync-ledgers?company=${encodeURIComponent(company)}&step=ledgers&group=${encodeURIComponent(groupName)}&client_id=${encodeURIComponent(clientId)}`;
       if (fy.from_date) url += `&from_date=${fy.from_date}`;
       if (fy.to_date)   url += `&to_date=${fy.to_date}`;
 
@@ -466,7 +467,8 @@ async function syncMaster(btn) {
   updateSyncProgress(groups.length, totalSteps);
   syncLog(`[Stock Items] Syncing stock items (HSN/GST)...`, "info");
   try {
-    let url = `${API_BASE}/tally/sync-ledgers?company=${encodeURIComponent(company)}&step=stock_items`;
+    const clientId = sessionStorage.getItem("selectedClientId") || "";
+    let url = `${API_BASE}/tally/sync-ledgers?company=${encodeURIComponent(company)}&step=stock_items&client_id=${encodeURIComponent(clientId)}`;
     if (fy.from_date) url += `&from_date=${fy.from_date}`;
     if (fy.to_date)   url += `&to_date=${fy.to_date}`;
 

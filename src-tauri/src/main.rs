@@ -101,6 +101,8 @@ struct TallyLedger {
     address: String,
     #[serde(rename = "MAILINGNAME", default)]
     mailing_name: String,
+    #[serde(rename = "GUID", default)]
+    guid: String,
 }
 
 impl TallyLedger {
@@ -290,6 +292,7 @@ struct LedgerRow {
     mobile: String,
     address: String,
     mailing_name: String,
+    guid: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -327,6 +330,7 @@ struct VoucherQuery {
     voucher_type: Option<String>,
     step: Option<String>,
     group: Option<String>,
+    client_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1392,6 +1396,7 @@ async fn sync_ledgers(
     <NATIVEMETHOD>LedStateName</NATIVEMETHOD><NATIVEMETHOD>PinCode</NATIVEMETHOD>
     <NATIVEMETHOD>Email</NATIVEMETHOD><NATIVEMETHOD>LedgerMobile</NATIVEMETHOD>
     <NATIVEMETHOD>Address</NATIVEMETHOD><NATIVEMETHOD>MailingName</NATIVEMETHOD>
+    <NATIVEMETHOD>GUID</NATIVEMETHOD>
   </COLLECTION></TDLMESSAGE></TDL></DESC></BODY>
 </ENVELOPE>"#, cvar = company_var(&company), from_date = from_date, to_date = to_date, group_filter = group_filter);
 
@@ -1425,6 +1430,7 @@ async fn sync_ledgers(
             mobile:                l.mobile.clone(),
             address:               l.address.clone(),
             mailing_name:          l.mailing_name.clone(),
+            guid:                  l.guid.clone(),
         }
     }).collect();
 
@@ -1443,6 +1449,7 @@ async fn sync_ledgers(
 
     if !rows.is_empty() {
         let http = make_http();
+        let client_id = params.client_id.as_deref().unwrap_or("");
         let upsert_rows: Vec<serde_json::Value> = rows.iter().map(|r| json!({
             "company_name":           company.trim(),
             "name":                   r.name.trim().replace("\r\n", "").replace("\r", "").replace("\n", ""),
@@ -1459,6 +1466,8 @@ async fn sync_ledgers(
             "address":                r.address.trim(),
             "mailing_name":           r.mailing_name.trim().replace("\r\n", "").replace("\r", "").replace("\n", ""),
             "fy_period":              fy_period,
+            "guid":                   r.guid.trim(),
+            "client_id":              client_id,
         })).collect();
 
         // FIX: surface Supabase errors instead of silently ignoring
