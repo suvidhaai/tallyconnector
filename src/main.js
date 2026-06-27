@@ -396,6 +396,10 @@ async function addCompany(btn) {
 // ═══════════════════════════════════════════════════════
 
 async function syncMaster(btn) {
+  if (!sessionStorage.getItem("selectedClientId")) {
+    showToast("⚠ Please select a client first", "error");
+    return;
+  }
   const company = btn.dataset.company;
   const orig    = btn.innerHTML;
   btn.classList.add("loading");
@@ -546,6 +550,10 @@ function updateSyncProgress(current, total) {
 }
 
 async function syncVouchers(btn) {
+  if (!sessionStorage.getItem("selectedClientId")) {
+    showToast("⚠ Please select a client first", "error");
+    return;
+  }
   const company = btn.dataset.company;
   const orig = btn.innerHTML;
   btn.classList.add("loading");
@@ -697,8 +705,204 @@ document.querySelector(".btn-logout").addEventListener("click", async () => {
 })();
 
 checkTallyHealth();
-loadCompanies();
+loadCompanies().then(tryAutoSelectClient);
 setInterval(checkTallyHealth, 15000);
+
+// ═══════════════════════════════════════════════════════
+// CLIENT SELECTOR DROPDOWN
+// ═══════════════════════════════════════════════════════
+
+const SUPABASE_URL = "https://yjcbbgjrxvwbdrcprbiy.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlqY2JiZ2pyeHZ3YmRyY3ByYml5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzA4NTUyNiwiZXhwIjoyMDgyNjYxNTI2fQ.0fEUSYFaiPMBYt-SZKgbVapGtfk-8I5JjQ6fheeCdxA";
+
+let allClients = [];
+const clientBtn = document.getElementById("btn-client-select");
+const clientLabel = document.getElementById("client-select-label");
+const clientPanel = document.getElementById("client-dropdown-panel");
+const clientListEl = document.getElementById("client-dropdown-list");
+const clientSearchInput = document.getElementById("client-dropdown-search");
+const clientHint = document.getElementById("client-hint");
+
+// Restore previous selection from sessionStorage
+(function restoreClientSelection() {
+  const savedName = sessionStorage.getItem("selectedClientName");
+  if (savedName) {
+    clientLabel.textContent = savedName;
+    clientBtn.classList.add("has-selection");
+    if (clientHint) clientHint.classList.add("hidden");
+  }
+})();
+
+async function loadClients() {
+  const email = sessionStorage.getItem("sb_user_email");
+  if (!email) return;
+
+  clientListEl.innerHTML = `<div class="client-dropdown-loading">Loading…</div>`;
+
+  try {
+    // Step 1: Get firm_id from users table (cache it)
+    let firmId = sessionStorage.getItem("sb_firm_id");
+    if (!firmId) {
+      const userRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/users?select=id,firm_id&email=eq.${encodeURIComponent(email)}&limit=1`, {
+        headers: {
+          "apikey": SUPABASE_ANON_KEY,
+          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+      });
+      if (!userRes.ok) throw new Error(`Users lookup HTTP ${userRes.status}`);
+      const users = await userRes.json();
+      console.log("[Clients] Users lookup result:", users);
+      if (!users.length || !users[0].firm_id) {
+        clientListEl.innerHTML = `<div class="client-dropdown-loading">No firm linked to this account</div>`;
+        return;
+      }
+      firmId = users[0].firm_id;
+      sessionStorage.setItem("sb_firm_id", firmId);
+      sessionStorage.setItem("sb_user_id", users[0].id);
+    }
+
+    // Step 2: Fetch clients by firm_id
+    const clientRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/clients?select=id,name&firm_id=eq.${encodeURIComponent(firmId)}&order=name.asc`, {
+      headers: {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+    });
+    if (!clientRes.ok) throw new Error(`Clients lookup HTTP ${clientRes.status}`);
+    allClients = await clientRes.json();
+    console.log(`[Clients] Loaded ${allClients.length} clients for firm ${firmId}:`, allClients);
+    renderClientList();
+  } catch (e) {
+    console.error("[Clients] Failed to load:", e);
+    clientListEl.innerHTML = `<div class="client-dropdown-loading">Failed to load clients</div>`;
+  }
+}
+
+function renderClientList(filter = "") {
+  const q = filter.toLowerCase();
+  const filtered = allClients.filter(c => (c.name || "").toLowerCase().includes(q));
+  const selectedId = sessionStorage.getItem("selectedClientId");
+
+  if (filtered.length === 0) {
+    clientListEl.innerHTML = `<div class="client-dropdown-empty">No clients found</div>`;
+    return;
+  }
+
+  clientListEl.innerHTML = "";
+  filtered.forEach(client => {
+    const isSelected = client.id === selectedId;
+    const initials = (client.name || "?").slice(0, 2).toUpperCase();
+    const item = document.createElement("div");
+    item.className = "client-dropdown-item" + (isSelected ? " selected" : "");
+    item.dataset.clientId = client.id;
+    item.dataset.clientName = client.name || "";
+    item.innerHTML = `
+      <div class="client-item-icon">${initials}</div>
+      <span class="client-item-name">${client.name || "Unnamed"}</span>
+      <svg class="client-item-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+    `;
+    item.addEventListener("click", () => selectClient(client));
+    clientListEl.appendChild(item);
+  });
+}
+
+function selectClient(client) {
+  sessionStorage.setItem("selectedClientId", client.id);
+  sessionStorage.setItem("selectedClientName", client.name || "");
+  clientLabel.textContent = client.name || "Unnamed";
+  clientBtn.classList.add("has-selection");
+  if (clientHint) clientHint.classList.add("hidden");
+  closeClientDropdown();
+  showToast(`✓ Switched to ${client.name}`, "success");
+}
+
+function toggleClientDropdown() {
+  const isOpen = clientPanel.classList.contains("open");
+  if (isOpen) {
+    closeClientDropdown();
+  } else {
+    openClientDropdown();
+  }
+}
+
+function openClientDropdown() {
+  clientPanel.classList.add("open");
+  clientBtn.classList.add("active");
+  clientSearchInput.value = "";
+  clientSearchInput.focus();
+  loadClients();
+}
+
+function closeClientDropdown() {
+  clientPanel.classList.remove("open");
+  clientBtn.classList.remove("active");
+}
+
+clientBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleClientDropdown();
+});
+
+clientPanel.addEventListener("click", (e) => e.stopPropagation());
+
+clientSearchInput.addEventListener("input", () => {
+  renderClientList(clientSearchInput.value);
+});
+
+document.addEventListener("click", () => closeClientDropdown());
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeClientDropdown();
+});
+
+// ── Auto-select client matching a Tally company name ────
+async function tryAutoSelectClient() {
+  // Skip if user already picked a client this session
+  if (sessionStorage.getItem("selectedClientId")) return;
+  // Need companies loaded from Tally
+  if (!allCompanies.length) return;
+
+  // Preload clients if not yet loaded
+  if (!allClients.length) {
+    const email = sessionStorage.getItem("sb_user_email");
+    if (!email) return;
+    try {
+      let firmId = sessionStorage.getItem("sb_firm_id");
+      if (!firmId) {
+        const uRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/users?select=id,firm_id&email=eq.${encodeURIComponent(email)}&limit=1`, {
+          headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": `Bearer ${SUPABASE_ANON_KEY}` },
+        });
+        const users = await uRes.json();
+        if (!users.length || !users[0].firm_id) return;
+        firmId = users[0].firm_id;
+        sessionStorage.setItem("sb_firm_id", firmId);
+        sessionStorage.setItem("sb_user_id", users[0].id);
+      }
+      const cRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/clients?select=id,name&firm_id=eq.${encodeURIComponent(firmId)}&order=name.asc`, {
+        headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": `Bearer ${SUPABASE_ANON_KEY}` },
+      });
+      allClients = await cRes.json();
+    } catch { return; }
+  }
+
+  // Only auto-select on exact name match
+  const tallyNames = allCompanies.map(c => c.name.toLowerCase());
+  let bestMatch = null;
+  for (const client of allClients) {
+    const cn = (client.name || "").toLowerCase();
+    if (!cn) continue;
+    if (tallyNames.includes(cn)) { bestMatch = client; break; }
+  }
+
+  if (bestMatch) {
+    selectClient(bestMatch);
+    console.log(`[Clients] Auto-selected "${bestMatch.name}" based on Tally company match`);
+  }
+}
+
 
 // ═══════════════════════════════════════════════════════
 // AUTO-UPDATE CHECK (runs on every launch)
