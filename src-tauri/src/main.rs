@@ -1821,6 +1821,7 @@ async fn sync_vouchers(
                         "narration":      v.narration,
                         "guid":           guid,
                         "alter_id":       v.alter_id,
+                        "client_id":      params.client_id.clone(),
                     })
                 }).collect();
 
@@ -1847,6 +1848,7 @@ async fn sync_vouchers(
                             "ledger_name":  entry.ledger_name,
                             "amount":       entry.amount,
                             "is_debit":     entry.is_debit,
+                            "client_id":    params.client_id.clone(),
                         }));
                     }
                     
@@ -1865,6 +1867,7 @@ async fn sync_vouchers(
                             "uom":          entry.uom,
                             "godown":       entry.godown,
                             "batch":        entry.batch,
+                            "client_id":    params.client_id.clone(),
                         }));
                     }
                 }

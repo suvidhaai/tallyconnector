@@ -574,7 +574,8 @@ async function syncVouchers(btn) {
     updateSyncProgress(i, VOUCHER_TYPES.length);
 
     try {
-      let url = `${API_BASE}/tally/sync-vouchers?company=${encodeURIComponent(company)}&voucher_type=${encodeURIComponent(vtype)}`;
+      const clientId = sessionStorage.getItem("selectedClientId") || "";
+      let url = `${API_BASE}/tally/sync-vouchers?company=${encodeURIComponent(company)}&voucher_type=${encodeURIComponent(vtype)}&client_id=${encodeURIComponent(clientId)}`;
       if (fy.from_date) url += `&from_date=${fy.from_date}`;
       if (fy.to_date) url += `&to_date=${fy.to_date}`;
 
