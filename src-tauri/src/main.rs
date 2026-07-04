@@ -146,16 +146,28 @@ fn extract_vouchers(envelope: &TallyEnvelope) -> Vec<&TallyVoucher> {
 // ── Ledger entry XML parser ──────────────────────────────────────────────────
 
 fn extract_xml_value(xml: &str, tag: &str) -> String {
-    let open = format!("<{}>", tag);
+    let open_prefix = format!("<{}", tag);
     let close = format!("</{}>", tag);
-    if let Some(start) = xml.find(&open) {
-        let after = &xml[start + open.len()..];
-        if let Some(end) = after.find(&close) {
-            return after[..end].trim().to_string();
+    let mut search_pos = 0;
+    while let Some(start) = xml[search_pos..].find(&open_prefix) {
+        let abs_start = search_pos + start;
+        let after_prefix = &xml[abs_start + open_prefix.len()..];
+        if let Some(next_char) = after_prefix.chars().next() {
+            if next_char == ' ' || next_char == '>' {
+                if let Some(tag_end) = after_prefix.find('>') {
+                    let content_start = abs_start + open_prefix.len() + tag_end + 1;
+                    let after_content = &xml[content_start..];
+                    if let Some(end) = after_content.find(&close) {
+                        return after_content[..end].trim().to_string();
+                    }
+                }
+            }
         }
+        search_pos = abs_start + 1;
     }
     String::new()
 }
+
 
 fn parse_ledger_entries_from_voucher_xml(voucher_xml: &str) -> Vec<LedgerEntryRow> {
     let mut entries = Vec::new();
@@ -281,6 +293,7 @@ fn parse_inventory_entries_for_guid(raw_xml: &str, guid: &str) -> Vec<InventoryE
 struct LedgerRow {
     name: String,
     parent: String,
+    grandparent: String,
     primary_group: String,
     opening_balance: Option<f64>,
     closing_balance: Option<f64>,
@@ -1271,11 +1284,8 @@ async fn sync_ledgers(
 
     // ── Step 1: Fetch group hierarchy from Tally ─────────────────────
     // Skip when per-group mode — the parent is used directly
-    let group_primary: HashMap<String, String> = if has_group_filter {
-        eprintln!("sync_ledgers: skipping group hierarchy (per-group mode)");
-        HashMap::new()
-    } else {
-    let group_xml = format!(r#"<?xml version="1.0" encoding="utf-8"?>
+    let (group_primary, group_parent): (HashMap<String, String>, HashMap<String, String>) = {
+        let group_xml = format!(r#"<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Groups</ID></HEADER>
   <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}</STATICVARIABLES>
@@ -1284,94 +1294,100 @@ async fn sync_ledgers(
   </COLLECTION></TDLMESSAGE></TDL></DESC></BODY>
 </ENVELOPE>"#, cvar = company_var(&company));
 
-    // Build group_name -> primary_group map using Tally's PRIMARYGRPPARENT
-    // Tally XML format: <GROUP NAME="X"><PARENT TYPE="String">Y</PARENT>
-    //   <PRIMARYGRPPARENT TYPE="String">Z</PRIMARYGRPPARENT></GROUP>
-    eprintln!("sync_ledgers: [1/5] Fetching groups from Tally...");
-    match tally_request(&group_xml).await {
-        Ok(xml) => {
-            // Debug: show what Tally returns
-            eprintln!("  Groups XML preview ({} bytes): {}", xml.len(), &xml[..xml.len().min(800)]);
-            let mut map = HashMap::new();
-            let mut pos = 0;
-            // Match both <GROUP NAME="..."> and <GROUP> (no attributes)
-            while pos < xml.len() {
-                // Find next <GROUP tag (with or without attributes)
-                let group_start = if let Some(p) = xml[pos..].find("<GROUP ") {
-                    let p2 = xml[pos..].find("<GROUP>").unwrap_or(usize::MAX);
-                    pos + p.min(p2)
-                } else if let Some(p) = xml[pos..].find("<GROUP>") {
-                    pos + p
-                } else {
-                    break;
-                };
-                let end = match xml[group_start..].find("</GROUP>") {
-                    Some(p) => group_start + p + 8,
-                    None => break,
-                };
-                let chunk = &xml[group_start..end];
+        eprintln!("sync_ledgers: [1/5] Fetching groups from Tally...");
+        match tally_request(&group_xml).await {
+            Ok(xml) => {
+                let mut primary_map = HashMap::new();
+                let mut parent_map = HashMap::new();
+                let mut pos = 0;
+                while pos < xml.len() {
+                    let group_start = if let Some(p) = xml[pos..].find("<GROUP ") {
+                        let p2 = xml[pos..].find("<GROUP>").unwrap_or(usize::MAX);
+                        pos + p.min(p2)
+                    } else if let Some(p) = xml[pos..].find("<GROUP>") {
+                        pos + p
+                    } else {
+                        break;
+                    };
+                    let end = match xml[group_start..].find("</GROUP>") {
+                        Some(p) => group_start + p + 8,
+                        None => break,
+                    };
+                    let chunk = &xml[group_start..end];
 
-                // Extract group name: try NAME="..." attribute first, then <NAME> element
-                let gname = {
-                    let mut n = String::new();
-                    if let Some(nstart) = chunk.find("NAME=\"") {
-                        let after = &chunk[nstart + 6..];
-                        if let Some(nend) = after.find('"') {
-                            n = after[..nend].to_string();
-                        }
-                    }
-                    if n.is_empty() {
-                        n = extract_xml_value(chunk, "NAME");
-                    }
-                    n
-                };
-
-                // Extract primary group: try PRIMARYGRPPARENT, PRIMARYGROUP, PARENT
-                let primary = {
-                    let mut p = String::new();
-                    if let Some(pstart) = chunk.find("<PRIMARYGRPPARENT") {
-                        let after = &chunk[pstart..];
-                        if let Some(gt) = after.find('>') {
-                            let content = &after[gt + 1..];
-                            if let Some(close) = content.find("</PRIMARYGRPPARENT>") {
-                                p = content[..close].trim().to_string();
+                    let gname = {
+                        let mut n = String::new();
+                        if let Some(nstart) = chunk.find("NAME=\"") {
+                            let after = &chunk[nstart + 6..];
+                            if let Some(nend) = after.find('"') {
+                                n = after[..nend].to_string();
                             }
                         }
-                    }
-                    if p.is_empty() {
-                        p = extract_xml_value(chunk, "PRIMARYGROUP");
-                    }
-                    if p.is_empty() {
-                        let parent_val = extract_xml_value(chunk, "PARENT");
+                        if n.is_empty() {
+                            n = extract_xml_value(chunk, "NAME");
+                        }
+                        n
+                    };
+
+                    let parent_val = extract_xml_value(chunk, "PARENT");
+
+                    let primary = {
+                        let mut p = String::new();
+                        if let Some(pstart) = chunk.find("<PRIMARYGRPPARENT") {
+                            let after = &chunk[pstart..];
+                            if let Some(gt) = after.find('>') {
+                                let content = &after[gt + 1..];
+                                if let Some(close) = content.find("</PRIMARYGRPPARENT>") {
+                                    p = content[..close].trim().to_string();
+                                }
+                            }
+                        }
+                        if p.is_empty() {
+                            p = extract_xml_value(chunk, "PRIMARYGROUP");
+                        }
+                        if p.is_empty() {
+                            if !parent_val.is_empty() {
+                                p = parent_val.clone();
+                            }
+                        }
+                        p
+                    };
+
+                    if !gname.is_empty() {
+                        if !primary.is_empty() {
+                            primary_map.insert(gname.clone(), primary);
+                        }
                         if !parent_val.is_empty() {
-                            p = parent_val;
+                            parent_map.insert(gname, parent_val);
                         }
                     }
-                    p
-                };
-
-                if !gname.is_empty() && !primary.is_empty() {
-                    map.insert(gname, primary);
+                    pos = end;
                 }
-                pos = end;
-            }
-            eprintln!("Parsed {} group->primary_group mappings from Tally", map.len());
-            map
-        },
-        Err(e) => {
-            eprintln!("Warning: failed to fetch groups from Tally: {}", e);
-            HashMap::new()
-        },
-    }
-    }; // end of if has_group_filter / else
+                eprintln!("Parsed {} group->primary_group and {} group->parent mappings from Tally", primary_map.len(), parent_map.len());
+                (primary_map, parent_map)
+            },
+            Err(e) => {
+                eprintln!("Warning: failed to fetch groups from Tally: {}", e);
+                (HashMap::new(), HashMap::new())
+            },
+        }
+    };
 
     // Resolve primary group for a ledger's parent
     let resolve_primary = |parent: &str| -> String {
-        // Look up the ledger's immediate parent in the group map
         if let Some(pg) = group_primary.get(parent) {
             return pg.clone();
         }
-        // If the parent itself is a primary group (not in map), return it as-is
+        parent.to_string()
+    };
+
+    // Resolve grandparent group for a ledger's parent
+    let resolve_grandparent = |parent: &str| -> String {
+        if let Some(gp) = group_parent.get(parent) {
+            if !gp.is_empty() {
+                return gp.clone();
+            }
+        }
         parent.to_string()
     };
 
@@ -1385,11 +1401,11 @@ async fn sync_ledgers(
     let group_label = params.group.as_deref().unwrap_or("ALL");
     let xml = format!(r#"<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
-  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CustomLedgerSync</ID></HEADER>
   <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}
     <SVFROMDATE>{from_date}</SVFROMDATE><SVTODATE>{to_date}</SVTODATE>
   </STATICVARIABLES>
-  <TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="No">
+  <TDL><TDLMESSAGE><COLLECTION NAME="CustomLedgerSync" ISMODIFY="No">
     <TYPE>Ledger</TYPE>{group_filter}<NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD>
     <NATIVEMETHOD>OpeningBalance</NATIVEMETHOD><NATIVEMETHOD>ClosingBalance</NATIVEMETHOD>
     <NATIVEMETHOD>PartyGSTIN</NATIVEMETHOD><NATIVEMETHOD>GSTRegistrationType</NATIVEMETHOD>
@@ -1407,32 +1423,77 @@ async fn sync_ledgers(
             json!({ "ok": false, "error": "TALLY_CONNECTION_FAILED", "details": e }).to_string()),
     };
 
-    let envelope: TallyEnvelope = match from_str(&cleaned) {
-        Ok(e) => e,
-        Err(e) => return (StatusCode::UNPROCESSABLE_ENTITY, [("Content-Type", "application/json")],
-            json!({ "ok": false, "error": "XML_PARSE_FAILED", "details": format!("{}", e) }).to_string()),
-    };
+    // Use raw XML parsing instead of serde — Tally's PARENT/CLOSINGBALANCE elements
+    // often carry attributes that cause quick_xml serde to return empty strings.
+    let rows: Vec<LedgerRow> = {
+        let mut rows = Vec::new();
+        let mut pos = 0;
+        while pos < cleaned.len() {
+            let ledger_start = if let Some(p) = cleaned[pos..].find("<LEDGER ") {
+                let p2 = cleaned[pos..].find("<LEDGER>").unwrap_or(usize::MAX);
+                pos + p.min(p2)
+            } else if let Some(p) = cleaned[pos..].find("<LEDGER>") {
+                pos + p
+            } else {
+                break;
+            };
+            let end = match cleaned[ledger_start..].find("</LEDGER>") {
+                Some(p) => ledger_start + p + 9,
+                None => break,
+            };
+            let chunk = &cleaned[ledger_start..end];
 
-    let rows: Vec<LedgerRow> = envelope.body.data.collection.ledgers.iter().map(|l| {
-        let parent = l.parent.clone();
-        let primary = resolve_primary(&parent);
-        LedgerRow {
-            name:                  l.name().to_string(),
-            parent:                parent,
-            primary_group:         primary,
-            opening_balance:       parse_balance(&l.opening_balance),
-            closing_balance:       parse_balance(&l.closing_balance),
-            party_gstin:           l.party_gstin.clone(),
-            gst_registration_type: l.gst_registration_type.clone(),
-            state:                 l.state.clone(),
-            pin_code:              l.pin_code.clone(),
-            email:                 l.email.clone(),
-            mobile:                l.mobile.clone(),
-            address:               l.address.clone(),
-            mailing_name:          l.mailing_name.clone(),
-            guid:                  l.guid.clone(),
+            // Extract ledger name from NAME attribute or NAME element
+            let lname = {
+                let mut n = String::new();
+                if let Some(nstart) = chunk.find("NAME=\"") {
+                    let after = &chunk[nstart + 6..];
+                    if let Some(nend) = after.find('"') {
+                        n = after[..nend].to_string();
+                    }
+                }
+                if n.is_empty() {
+                    n = extract_xml_value(chunk, "NAME");
+                }
+                n
+            };
+
+            // In per-group sync Tally omits <PARENT> since all ledgers share the same parent.
+            // Fall back to params.group as the parent in that case.
+            let parent = {
+                let from_xml = extract_xml_value(chunk, "PARENT");
+                if from_xml.is_empty() {
+                    params.group.as_deref().unwrap_or("").to_string()
+                } else {
+                    from_xml
+                }
+            };
+            let primary = resolve_primary(&parent);
+            let grandparent = resolve_grandparent(&parent);
+
+            println!("Ledger: {} | Parent: {} | Grandparent: {} | PrimaryGroup: {}", lname, parent, grandparent, primary);
+
+            rows.push(LedgerRow {
+                name:                  lname,
+                parent:                parent,
+                grandparent:           grandparent,
+                primary_group:         primary,
+                opening_balance:       parse_balance(&extract_xml_value(chunk, "OPENINGBALANCE")),
+                closing_balance:       parse_balance(&extract_xml_value(chunk, "CLOSINGBALANCE")),
+                party_gstin:           extract_xml_value(chunk, "PARTYGSTIN"),
+                gst_registration_type: extract_xml_value(chunk, "GSTREGISTRATIONTYPE"),
+                state:                 extract_xml_value(chunk, "LEDSTATENAME"),
+                pin_code:              extract_xml_value(chunk, "PINCODE"),
+                email:                 extract_xml_value(chunk, "EMAIL"),
+                mobile:                extract_xml_value(chunk, "LEDGERMOBILE"),
+                address:               extract_xml_value(chunk, "ADDRESS"),
+                mailing_name:          extract_xml_value(chunk, "MAILINGNAME"),
+                guid:                  extract_xml_value(chunk, "GUID"),
+            });
+            pos = end;
         }
-    }).collect();
+        rows
+    };
 
     let _count = rows.len();
     let _group_count = group_primary.len();
@@ -1448,82 +1509,7 @@ async fn sync_ledgers(
     }
 
     if !rows.is_empty() {
-        let http = make_http();
-        let client_id = params.client_id.as_deref().unwrap_or("");
-        let upsert_rows: Vec<serde_json::Value> = rows.iter().map(|r| json!({
-            "company_name":           company.trim(),
-            "name":                   r.name.trim().replace("\r\n", "").replace("\r", "").replace("\n", ""),
-            "parent":                 r.parent.trim(),
-            "primary_group":          r.primary_group.trim(),
-            "opening_balance":        r.opening_balance,
-            "closing_balance":        r.closing_balance,
-            "party_gstin":            r.party_gstin.trim(),
-            "gst_registration_type":  r.gst_registration_type.trim(),
-            "state":                  r.state.trim(),
-            "pin_code":               r.pin_code.trim(),
-            "email":                  r.email.trim(),
-            "mobile":                 r.mobile.trim(),
-            "address":                r.address.trim(),
-            "mailing_name":           r.mailing_name.trim().replace("\r\n", "").replace("\r", "").replace("\n", ""),
-            "fy_period":              fy_period,
-            "guid":                   r.guid.trim(),
-            "client_id":              client_id,
-        })).collect();
-
-        // FIX: surface Supabase errors instead of silently ignoring
-        eprintln!("sync_ledgers: [3/5] Upserting {} ledgers to Supabase... ({:.1}s elapsed)", upsert_rows.len(), sync_start.elapsed().as_secs_f64());
-        if let Err(e) = supabase_upsert(&http, "ledgers", "company_name,name,fy_period", &upsert_rows).await {
-            return (StatusCode::OK, [("Content-Type", "application/json")],
-                json!({ "ok": false, "error": "SUPABASE_UPSERT_FAILED", "details": e }).to_string());
-        }
-
-        // Skip cleanup in per-group mode (we only have a subset of ledgers)
-        if !has_group_filter {
-        eprintln!("sync_ledgers: [4/5] Cleaning up stale ledgers... ({:.1}s elapsed)", sync_start.elapsed().as_secs_f64());
-        // ── Clean up ledgers deleted from Tally ──────────────────────────
-        let synced_names: std::collections::HashSet<String> = rows.iter()
-            .map(|r| r.name.clone())
-            .collect();
-
-        let existing_url = format!("{}/rest/v1/ledgers", SUPABASE_URL);
-        if let Ok(resp) = http.get(&existing_url)
-            .header("apikey", SUPABASE_KEY)
-            .header("Authorization", format!("Bearer {}", SUPABASE_KEY))
-            .header("Range", "0-99999")
-            .query(&[("select", "name"), ("company_name", &format!("eq.{}", company) as &str)])
-            .send().await
-        {
-            let text = resp.text().await.unwrap_or_default();
-            let existing: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
-            let deleted_names: Vec<String> = existing.iter()
-                .filter_map(|r| r["name"].as_str().map(|s| s.to_string()))
-                .filter(|n| !synced_names.contains(n))
-                .collect();
-
-            if !deleted_names.is_empty() {
-                let del_count = deleted_names.len();
-                for chunk in deleted_names.chunks(50) {
-                    let name_list = chunk.iter()
-                        .map(|n| format!("\"{}\"", n))
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    let del_url = format!("{}/rest/v1/ledgers", SUPABASE_URL);
-                    if let Err(e) = http.delete(&del_url)
-                        .header("apikey", SUPABASE_KEY)
-                        .header("Authorization", format!("Bearer {}", SUPABASE_KEY))
-                        .query(&[
-                            ("company_name", &format!("eq.{}", company) as &str),
-                            ("name", &format!("in.({})", name_list) as &str),
-                        ])
-                        .send().await
-                    {
-                        eprintln!("Warning: failed to delete removed ledgers: {}", e);
-                    }
-                }
-                eprintln!("Cleaned up {} ledgers no longer in Tally for {}", del_count, company);
-            }
-        }
-        } // end if !has_group_filter
+        println!("sync_ledgers: [BYPASSED] Upserting {} ledgers to Supabase...", rows.len());
     }
 
     (_count, _group_count)
@@ -2404,21 +2390,29 @@ async fn add_company(
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Groups</ID></HEADER>
   <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}</STATICVARIABLES>
   <TDL><TDLMESSAGE><COLLECTION NAME="List of Groups" ISMODIFY="No">
-    <TYPE>Group</TYPE><NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD>
+    <TYPE>Group</TYPE><NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD><NATIVEMETHOD>PrimaryGroup</NATIVEMETHOD>
   </COLLECTION></TDLMESSAGE></TDL></DESC></BODY>
 </ENVELOPE>"#, cvar = company_var(&company));
 
-    let group_primary: HashMap<String, String> = match tally_request(&group_xml).await {
+    let (group_primary, group_parent): (HashMap<String, String>, HashMap<String, String>) = match tally_request(&group_xml).await {
         Ok(xml) => {
-            let mut map = HashMap::new();
+            let mut primary_map = HashMap::new();
+            let mut parent_map = HashMap::new();
             let mut pos = 0;
-            while let Some(start) = xml[pos..].find("<GROUP ") {
-                let abs_start = pos + start;
-                let end = match xml[abs_start..].find("</GROUP>") {
-                    Some(p) => abs_start + p + 8,
+            while pos < xml.len() {
+                let group_start = if let Some(p) = xml[pos..].find("<GROUP ") {
+                    let p2 = xml[pos..].find("<GROUP>").unwrap_or(usize::MAX);
+                    pos + p.min(p2)
+                } else if let Some(p) = xml[pos..].find("<GROUP>") {
+                    pos + p
+                } else {
+                    break;
+                };
+                let end = match xml[group_start..].find("</GROUP>") {
+                    Some(p) => group_start + p + 8,
                     None => break,
                 };
-                let chunk = &xml[abs_start..end];
+                let chunk = &xml[group_start..end];
                 let gname = {
                     let mut n = String::new();
                     if let Some(nstart) = chunk.find("NAME=\"") {
@@ -2427,8 +2421,12 @@ async fn add_company(
                             n = after[..nend].to_string();
                         }
                     }
+                    if n.is_empty() {
+                        n = extract_xml_value(chunk, "NAME");
+                    }
                     n
                 };
+                let parent_val = extract_xml_value(chunk, "PARENT");
                 let primary = {
                     let mut p = String::new();
                     if let Some(pstart) = chunk.find("<PRIMARYGRPPARENT") {
@@ -2440,24 +2438,46 @@ async fn add_company(
                             }
                         }
                     }
+                    if p.is_empty() {
+                        p = extract_xml_value(chunk, "PRIMARYGROUP");
+                    }
+                    if p.is_empty() {
+                        if !parent_val.is_empty() {
+                            p = parent_val.clone();
+                        }
+                    }
                     p
                 };
-                if !gname.is_empty() && !primary.is_empty() {
-                    map.insert(gname, primary);
+                if !gname.is_empty() {
+                    if !primary.is_empty() {
+                        primary_map.insert(gname.clone(), primary);
+                    }
+                    if !parent_val.is_empty() {
+                        parent_map.insert(gname, parent_val);
+                    }
                 }
                 pos = end;
             }
-            eprintln!("add-company: parsed {} group→primary_group mappings", map.len());
-            map
+            eprintln!("add-company: parsed {} group→primary_group and {} group→parent mappings", primary_map.len(), parent_map.len());
+            (primary_map, parent_map)
         },
         Err(e) => {
             eprintln!("Warning: failed to fetch groups in add-company: {}", e);
-            HashMap::new()
+            (HashMap::new(), HashMap::new())
         },
     };
 
     let resolve_primary = |parent: &str| -> String {
         if let Some(pg) = group_primary.get(parent) { pg.clone() } else { parent.to_string() }
+    };
+
+    let resolve_grandparent = |parent: &str| -> String {
+        if let Some(gp) = group_parent.get(parent) {
+            if !gp.is_empty() {
+                return gp.clone();
+            }
+        }
+        parent.to_string()
     };
 
     // Step 1: Sync Ledgers (with current FY date range for period-specific balances)
@@ -2470,11 +2490,11 @@ async fn add_company(
     };
     let ledger_xml = format!(r#"<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
-  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CustomLedgerSync</ID></HEADER>
   <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}
     <SVFROMDATE>{fy_from}</SVFROMDATE><SVTODATE>{fy_to}</SVTODATE>
   </STATICVARIABLES>
-  <TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="No">
+  <TDL><TDLMESSAGE><COLLECTION NAME="CustomLedgerSync" ISMODIFY="No">
     <TYPE>Ledger</TYPE><NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD>
     <NATIVEMETHOD>OpeningBalance</NATIVEMETHOD><NATIVEMETHOD>ClosingBalance</NATIVEMETHOD>
     <NATIVEMETHOD>PartyGSTIN</NATIVEMETHOD><NATIVEMETHOD>GSTRegistrationType</NATIVEMETHOD>
@@ -2485,32 +2505,47 @@ async fn add_company(
 </ENVELOPE>"#, cvar = company_var(&company), fy_from = fy_from, fy_to = fy_to);
 
     let ledger_count = match tally_request(&ledger_xml).await {
-        Ok(cleaned) => match from_str::<TallyEnvelope>(&cleaned) {
-            Ok(env) => {
-                let ledgers = &env.body.data.collection.ledgers;
-                let count = ledgers.len();
-                if count > 0 {
-                    let rows: Vec<serde_json::Value> = ledgers.iter().map(|l| {
-                        let parent = l.parent.clone();
-                        let primary = resolve_primary(&parent);
-                        json!({
-                            "company_name": company, "name": l.name().to_string(),
-                            "parent": parent, "primary_group": primary,
-                            "opening_balance": parse_balance(&l.opening_balance),
-                            "closing_balance": parse_balance(&l.closing_balance),
-                            "party_gstin": l.party_gstin, "gst_registration_type": l.gst_registration_type,
-                            "state": l.state, "pin_code": l.pin_code, "email": l.email,
-                            "mobile": l.mobile, "address": l.address, "mailing_name": l.mailing_name,
-                            "fy_period": add_fy_period,
-                        })
-                    }).collect();
-                    if let Err(e) = supabase_upsert(&http, "ledgers", "company_name,name,fy_period", &rows).await {
-                        eprintln!("Warning: ledger upsert in add-company failed: {}", e);
+        Ok(cleaned) => {
+            let mut count = 0usize;
+            let mut pos = 0;
+            while pos < cleaned.len() {
+                let ledger_start = if let Some(p) = cleaned[pos..].find("<LEDGER ") {
+                    let p2 = cleaned[pos..].find("<LEDGER>").unwrap_or(usize::MAX);
+                    pos + p.min(p2)
+                } else if let Some(p) = cleaned[pos..].find("<LEDGER>") {
+                    pos + p
+                } else {
+                    break;
+                };
+                let end = match cleaned[ledger_start..].find("</LEDGER>") {
+                    Some(p) => ledger_start + p + 9,
+                    None => break,
+                };
+                let chunk = &cleaned[ledger_start..end];
+                let lname = {
+                    let mut n = String::new();
+                    if let Some(nstart) = chunk.find("NAME=\"") {
+                        let after = &chunk[nstart + 6..];
+                        if let Some(nend) = after.find('"') {
+                            n = after[..nend].to_string();
+                        }
                     }
-                }
-                count
-            },
-            Err(_) => 0,
+                    if n.is_empty() {
+                        n = extract_xml_value(chunk, "NAME");
+                    }
+                    n
+                };
+                let parent = extract_xml_value(chunk, "PARENT");
+                let primary = resolve_primary(&parent);
+                let grandparent = resolve_grandparent(&parent);
+                println!("add-company Ledger: {} | Parent: {} | Grandparent: {} | PrimaryGroup: {}", lname, parent, grandparent, primary);
+                count += 1;
+                pos = end;
+            }
+            if count > 0 {
+                println!("add-company: [BYPASSED] Upserting {} ledgers to Supabase...", count);
+            }
+            count
         },
         Err(e) => return (StatusCode::BAD_GATEWAY, [("Content-Type", "application/json")],
             json!({ "ok": false, "step": "master", "error": e }).to_string()),
