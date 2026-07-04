@@ -145,6 +145,17 @@ fn extract_vouchers(envelope: &TallyEnvelope) -> Vec<&TallyVoucher> {
 
 // ── Ledger entry XML parser ──────────────────────────────────────────────────
 
+fn decode_xml_entities(s: &str) -> String {
+    let cleaned = s.replace("&amp;", "&")
+                   .replace("&lt;", "<")
+                   .replace("&gt;", ">")
+                   .replace("&quot;", "\"")
+                   .replace("&apos;", "'")
+                   .replace("&#4;", "")
+                   .replace("\u{4}", "");
+    cleaned.trim().to_string()
+}
+
 fn extract_xml_value(xml: &str, tag: &str) -> String {
     let open_prefix = format!("<{}", tag);
     let close = format!("</{}>", tag);
@@ -158,7 +169,8 @@ fn extract_xml_value(xml: &str, tag: &str) -> String {
                     let content_start = abs_start + open_prefix.len() + tag_end + 1;
                     let after_content = &xml[content_start..];
                     if let Some(end) = after_content.find(&close) {
-                        return after_content[..end].trim().to_string();
+                        let val = after_content[..end].trim().to_string();
+                        return decode_xml_entities(&val);
                     }
                 }
             }
@@ -731,7 +743,7 @@ fn build_ledger_create_xml(company: &str, item: &PushVoucherItem) -> Option<Stri
 
         ledger_xml.push_str(&format!(
             r#"
-          <LEDGER NAME="{ledger}" ACTION="Create">
+          <LEDGER NAME="{ledger}" ACTION="Keep">
             <NAME.LIST>
               <NAME>{ledger}</NAME>
             </NAME.LIST>
@@ -1326,7 +1338,7 @@ async fn sync_ledgers(
                         if n.is_empty() {
                             n = extract_xml_value(chunk, "NAME");
                         }
-                        n
+                        decode_xml_entities(&n)
                     };
 
                     let parent_val = extract_xml_value(chunk, "PARENT");
@@ -1375,20 +1387,34 @@ async fn sync_ledgers(
 
     // Resolve primary group for a ledger's parent
     let resolve_primary = |parent: &str| -> String {
-        if let Some(pg) = group_primary.get(parent) {
-            return pg.clone();
+        if parent.is_empty() || parent == "Primary" {
+            return String::new();
         }
-        parent.to_string()
+        if let Some(pg) = group_primary.get(parent) {
+            if pg.is_empty() || pg == "Primary" {
+                parent.to_string()
+            } else {
+                pg.clone()
+            }
+        } else {
+            parent.to_string()
+        }
     };
 
     // Resolve grandparent group for a ledger's parent
     let resolve_grandparent = |parent: &str| -> String {
-        if let Some(gp) = group_parent.get(parent) {
-            if !gp.is_empty() {
-                return gp.clone();
-            }
+        if parent.is_empty() || parent == "Primary" {
+            return String::new();
         }
-        parent.to_string()
+        if let Some(gp) = group_parent.get(parent) {
+            if gp.is_empty() || gp == "Primary" {
+                parent.to_string()
+            } else {
+                gp.clone()
+            }
+        } else {
+            parent.to_string()
+        }
     };
 
     // ── Step 2: Fetch ledgers from Tally ─────────────────────────────
@@ -1455,7 +1481,7 @@ async fn sync_ledgers(
                 if n.is_empty() {
                     n = extract_xml_value(chunk, "NAME");
                 }
-                n
+                decode_xml_entities(&n)
             };
 
             // In per-group sync Tally omits <PARENT> since all ledgers share the same parent.
@@ -1509,7 +1535,82 @@ async fn sync_ledgers(
     }
 
     if !rows.is_empty() {
-        println!("sync_ledgers: [BYPASSED] Upserting {} ledgers to Supabase...", rows.len());
+        let http = make_http();
+        let client_id = params.client_id.as_deref().unwrap_or("");
+        let upsert_rows: Vec<serde_json::Value> = rows.iter().map(|r| json!({
+            "company_name":           company.trim(),
+            "name":                   r.name.trim().replace("\r\n", "").replace("\r", "").replace("\n", ""),
+            "parent":                 r.parent.trim(),
+            "grandparent":            r.grandparent.trim(),
+            "primary_group":          r.primary_group.trim(),
+            "opening_balance":        r.opening_balance,
+            "closing_balance":        r.closing_balance,
+            "party_gstin":            r.party_gstin.trim(),
+            "gst_registration_type":  r.gst_registration_type.trim(),
+            "state":                  r.state.trim(),
+            "pin_code":               r.pin_code.trim(),
+            "email":                  r.email.trim(),
+            "mobile":                 r.mobile.trim(),
+            "address":                r.address.trim(),
+            "mailing_name":           r.mailing_name.trim().replace("\r\n", "").replace("\r", "").replace("\n", ""),
+            "fy_period":              fy_period.clone(),
+            "guid":                   r.guid.trim(),
+            "client_id":              client_id,
+        })).collect();
+
+        // Surface Supabase errors
+        eprintln!("sync_ledgers: [3/5] Upserting {} ledgers to Supabase... ({:.1}s elapsed)", upsert_rows.len(), sync_start.elapsed().as_secs_f64());
+        if let Err(e) = supabase_upsert(&http, "ledgers", "company_name,name,fy_period", &upsert_rows).await {
+            return (StatusCode::OK, [("Content-Type", "application/json")],
+                json!({ "ok": false, "error": "SUPABASE_UPSERT_FAILED", "details": e }).to_string());
+        }
+
+        // Skip cleanup in per-group mode (we only have a subset of ledgers)
+        if !has_group_filter {
+            eprintln!("sync_ledgers: [4/5] Cleaning up stale ledgers... ({:.1}s elapsed)", sync_start.elapsed().as_secs_f64());
+            let synced_names: std::collections::HashSet<String> = rows.iter()
+                .map(|r| r.name.clone())
+                .collect();
+
+            let existing_url = format!("{}/rest/v1/ledgers", SUPABASE_URL);
+            if let Ok(resp) = http.get(&existing_url)
+                .header("apikey", SUPABASE_KEY)
+                .header("Authorization", format!("Bearer {}", SUPABASE_KEY))
+                .header("Range", "0-99999")
+                .query(&[("select", "name"), ("company_name", &format!("eq.{}", company) as &str)])
+                .send().await
+            {
+                let text = resp.text().await.unwrap_or_default();
+                let existing: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+                let deleted_names: Vec<String> = existing.iter()
+                    .filter_map(|r| r["name"].as_str().map(|s| s.to_string()))
+                    .filter(|n| !synced_names.contains(n))
+                    .collect();
+
+                if !deleted_names.is_empty() {
+                    let del_count = deleted_names.len();
+                    for chunk in deleted_names.chunks(50) {
+                        let name_list = chunk.iter()
+                            .map(|n| format!("\"{}\"", n))
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        let del_url = format!("{}/rest/v1/ledgers", SUPABASE_URL);
+                        if let Err(e) = http.delete(&del_url)
+                            .header("apikey", SUPABASE_KEY)
+                            .header("Authorization", format!("Bearer {}", SUPABASE_KEY))
+                            .query(&[
+                                ("company_name", &format!("eq.{}", company) as &str),
+                                ("name", &format!("in.({})", name_list) as &str),
+                            ])
+                            .send().await
+                        {
+                            eprintln!("Warning: failed to delete removed ledgers: {}", e);
+                        }
+                    }
+                    eprintln!("Cleaned up {} ledgers no longer in Tally for {}", del_count, company);
+                }
+            }
+        }
     }
 
     (_count, _group_count)
@@ -2424,7 +2525,7 @@ async fn add_company(
                     if n.is_empty() {
                         n = extract_xml_value(chunk, "NAME");
                     }
-                    n
+                    decode_xml_entities(&n)
                 };
                 let parent_val = extract_xml_value(chunk, "PARENT");
                 let primary = {
@@ -2468,16 +2569,33 @@ async fn add_company(
     };
 
     let resolve_primary = |parent: &str| -> String {
-        if let Some(pg) = group_primary.get(parent) { pg.clone() } else { parent.to_string() }
+        if parent.is_empty() || parent == "Primary" {
+            return String::new();
+        }
+        if let Some(pg) = group_primary.get(parent) {
+            if pg.is_empty() || pg == "Primary" {
+                parent.to_string()
+            } else {
+                pg.clone()
+            }
+        } else {
+            parent.to_string()
+        }
     };
 
     let resolve_grandparent = |parent: &str| -> String {
-        if let Some(gp) = group_parent.get(parent) {
-            if !gp.is_empty() {
-                return gp.clone();
-            }
+        if parent.is_empty() || parent == "Primary" {
+            return String::new();
         }
-        parent.to_string()
+        if let Some(gp) = group_parent.get(parent) {
+            if gp.is_empty() || gp == "Primary" {
+                parent.to_string()
+            } else {
+                gp.clone()
+            }
+        } else {
+            parent.to_string()
+        }
     };
 
     // Step 1: Sync Ledgers (with current FY date range for period-specific balances)
@@ -2506,7 +2624,7 @@ async fn add_company(
 
     let ledger_count = match tally_request(&ledger_xml).await {
         Ok(cleaned) => {
-            let mut count = 0usize;
+            let mut rows = Vec::new();
             let mut pos = 0;
             while pos < cleaned.len() {
                 let ledger_start = if let Some(p) = cleaned[pos..].find("<LEDGER ") {
@@ -2533,17 +2651,39 @@ async fn add_company(
                     if n.is_empty() {
                         n = extract_xml_value(chunk, "NAME");
                     }
-                    n
+                    decode_xml_entities(&n)
                 };
                 let parent = extract_xml_value(chunk, "PARENT");
                 let primary = resolve_primary(&parent);
                 let grandparent = resolve_grandparent(&parent);
                 println!("add-company Ledger: {} | Parent: {} | Grandparent: {} | PrimaryGroup: {}", lname, parent, grandparent, primary);
-                count += 1;
+
+                rows.push(json!({
+                    "company_name": company.trim(),
+                    "name": lname.trim().replace("\r\n", "").replace("\r", "").replace("\n", ""),
+                    "parent": parent.trim(),
+                    "grandparent": grandparent.trim(),
+                    "primary_group": primary.trim(),
+                    "opening_balance": parse_balance(&extract_xml_value(chunk, "OPENINGBALANCE")),
+                    "closing_balance": parse_balance(&extract_xml_value(chunk, "CLOSINGBALANCE")),
+                    "party_gstin": extract_xml_value(chunk, "PARTYGSTIN").trim(),
+                    "gst_registration_type": extract_xml_value(chunk, "GSTREGISTRATIONTYPE").trim(),
+                    "state": extract_xml_value(chunk, "LEDSTATENAME").trim(),
+                    "pin_code": extract_xml_value(chunk, "PINCODE").trim(),
+                    "email": extract_xml_value(chunk, "EMAIL").trim(),
+                    "mobile": extract_xml_value(chunk, "LEDGERMOBILE").trim(),
+                    "address": extract_xml_value(chunk, "ADDRESS").trim(),
+                    "mailing_name": extract_xml_value(chunk, "MAILINGNAME").trim().replace("\r\n", "").replace("\r", "").replace("\n", ""),
+                    "fy_period": add_fy_period.clone(),
+                }));
                 pos = end;
             }
+            let count = rows.len();
             if count > 0 {
-                println!("add-company: [BYPASSED] Upserting {} ledgers to Supabase...", count);
+                eprintln!("add-company: Upserting {} ledgers to Supabase...", count);
+                if let Err(e) = supabase_upsert(&http, "ledgers", "company_name,name,fy_period", &rows).await {
+                    eprintln!("Warning: ledger upsert in add-company failed: {}", e);
+                }
             }
             count
         },
