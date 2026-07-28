@@ -558,9 +558,9 @@ async fn switch_tally_period(company: &str, from_date: &str, _to_date: &str) -> 
       <STATICVARIABLES>
         <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
         <SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY>
-        <SVCURRENTDATE>{from_date}</SVCURRENTDATE>
-        <SVFROMDATE>{from_date}</SVFROMDATE>
-        <SVTODATE>{from_date}</SVTODATE>
+        <SVCURRENTDATE TYPE="Date">{from_date}</SVCURRENTDATE>
+        <SVFROMDATE TYPE="Date">{from_date}</SVFROMDATE>
+        <SVTODATE TYPE="Date">{from_date}</SVTODATE>
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
@@ -693,8 +693,8 @@ fn voucher_export_xml(company: &str, from_date: &str, to_date: &str, voucher_typ
       <STATICVARIABLES>
         <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
         {cvar}
-        <SVFROMDATE>{from_date}</SVFROMDATE>
-        <SVTODATE>{to_date}</SVTODATE>
+        <SVFROMDATE TYPE="Date">{from_date}</SVFROMDATE>
+        <SVTODATE TYPE="Date">{to_date}</SVTODATE>
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
@@ -727,15 +727,66 @@ fn voucher_export_xml(company: &str, from_date: &str, to_date: &str, voucher_typ
     )
 }
 
+async fn fetch_tally_ledger_names(company: &str) -> std::collections::HashSet<String> {
+    let xml = format!(r#"<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>ListOfLedgerNames</ID></HEADER>
+  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}</STATICVARIABLES>
+  <TDL><TDLMESSAGE><COLLECTION NAME="ListOfLedgerNames" ISMODIFY="No">
+    <TYPE>Ledger</TYPE><NATIVEMETHOD>Name</NATIVEMETHOD>
+  </COLLECTION></TDLMESSAGE></TDL></DESC></BODY>
+</ENVELOPE>"#, cvar = company_var(company));
+
+    let mut names = std::collections::HashSet::new();
+    if let Ok(resp) = tally_request(&xml).await {
+        let mut pos = 0;
+        while pos < resp.len() {
+            let start = match resp[pos..].find("<LEDGER") {
+                Some(p) => pos + p,
+                None => break,
+            };
+            let end = match resp[start..].find("</LEDGER>") {
+                Some(p) => start + p + 9,
+                None => break,
+            };
+            let chunk = &resp[start..end];
+            let name = {
+                let mut n = String::new();
+                if let Some(nstart) = chunk.find("NAME=\"") {
+                    let after = &chunk[nstart + 6..];
+                    if let Some(nend) = after.find('"') {
+                        n = after[..nend].to_string();
+                    }
+                }
+                if n.is_empty() {
+                    n = extract_xml_value(chunk, "NAME");
+                }
+                decode_xml_entities(&n)
+            };
+            if !name.is_empty() {
+                names.insert(name.to_lowercase().trim().to_string());
+            }
+            pos = end;
+        }
+    }
+    names
+}
+
 // ── Build Tally import XML ───────────────────────────────────────────────────
 // Returns (optional ledger-creation XML, voucher XML).
 // When auto_create_ledgers is true, ledger XML must be sent to Tally FIRST.
 
-fn build_ledger_create_xml(company: &str, item: &PushVoucherItem) -> Option<String> {
+fn build_ledger_create_xml(company: &str, item: &PushVoucherItem, existing_ledgers: &std::collections::HashSet<String>) -> Option<String> {
     if !item.auto_create_ledgers { return None; }
 
     let mut ledger_xml = String::new();
     for entry in &item.ledger_entries {
+        // If ledger already exists in Tally, skip it to prevent parent modification
+        let normalized = entry.ledger_name.trim().to_lowercase();
+        if existing_ledgers.contains(&normalized) {
+            continue;
+        }
+
         let parent = entry.parent_group
             .as_deref()
             .filter(|s| !s.is_empty())
@@ -1429,7 +1480,7 @@ async fn sync_ledgers(
 <ENVELOPE>
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CustomLedgerSync</ID></HEADER>
   <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}
-    <SVFROMDATE>{from_date}</SVFROMDATE><SVTODATE>{to_date}</SVTODATE>
+    <SVFROMDATE TYPE="Date">{from_date}</SVFROMDATE><SVTODATE TYPE="Date">{to_date}</SVTODATE>
   </STATICVARIABLES>
   <TDL><TDLMESSAGE><COLLECTION NAME="CustomLedgerSync" ISMODIFY="No">
     <TYPE>Ledger</TYPE>{group_filter}<NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD>
@@ -2099,7 +2150,13 @@ async fn push_voucher(Json(req): Json<PushVoucherRequest>) -> impl IntoResponse 
         }
 
         // Step A: Auto-create ledgers first (if enabled)
-        if let Some(ledger_xml) = build_ledger_create_xml(&company, item) {
+        let existing_ledgers = if item.auto_create_ledgers {
+            fetch_tally_ledger_names(&company).await
+        } else {
+            std::collections::HashSet::new()
+        };
+
+        if let Some(ledger_xml) = build_ledger_create_xml(&company, item, &existing_ledgers) {
             match tally_request(&ledger_xml).await {
                 Ok(resp) => {
                     let created_count = resp.matches("<CREATED>").count();
@@ -2334,8 +2391,8 @@ async fn debug_vouchers(
       <STATICVARIABLES>
         <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
         {cvar}
-        <SVFROMDATE>{from_date}</SVFROMDATE>
-        <SVTODATE>{to_date}</SVTODATE>
+        <SVFROMDATE TYPE="Date">{from_date}</SVFROMDATE>
+        <SVTODATE TYPE="Date">{to_date}</SVTODATE>
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
@@ -2610,7 +2667,7 @@ async fn add_company(
 <ENVELOPE>
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CustomLedgerSync</ID></HEADER>
   <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}
-    <SVFROMDATE>{fy_from}</SVFROMDATE><SVTODATE>{fy_to}</SVTODATE>
+    <SVFROMDATE TYPE="Date">{fy_from}</SVFROMDATE><SVTODATE TYPE="Date">{fy_to}</SVTODATE>
   </STATICVARIABLES>
   <TDL><TDLMESSAGE><COLLECTION NAME="CustomLedgerSync" ISMODIFY="No">
     <TYPE>Ledger</TYPE><NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD>
