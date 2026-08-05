@@ -129,6 +129,8 @@ struct TallyVoucher {
     guid: String,
     #[serde(rename = "ALTERID", default)]
     alter_id: String,
+    #[serde(rename = "ISOPTIONAL", default)]
+    is_optional: String,
 }
 
 fn extract_vouchers(envelope: &TallyEnvelope) -> Vec<&TallyVoucher> {
@@ -727,6 +729,60 @@ fn voucher_export_xml(company: &str, from_date: &str, to_date: &str, voucher_typ
     )
 }
 
+async fn fetch_tally_voucher_types(company: &str) -> Vec<String> {
+    let xml = format!(r#"<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>ListOfVoucherTypes</ID></HEADER>
+  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}</STATICVARIABLES>
+  <TDL><TDLMESSAGE><COLLECTION NAME="ListOfVoucherTypes" ISMODIFY="No">
+    <TYPE>VoucherType</TYPE><NATIVEMETHOD>Name</NATIVEMETHOD>
+  </COLLECTION></TDLMESSAGE></TDL></DESC></BODY>
+</ENVELOPE>"#, cvar = company_var(company));
+
+    let mut types = Vec::new();
+    if let Ok(resp) = tally_request(&xml).await {
+        let mut pos = 0;
+        while pos < resp.len() {
+            let start = match resp[pos..].find("<VOUCHERTYPE") {
+                Some(p) => pos + p,
+                None => break,
+            };
+            let end = match resp[start..].find("</VOUCHERTYPE>") {
+                Some(p) => start + p + "</VOUCHERTYPE>".len(),
+                None => break,
+            };
+            let chunk = &resp[start..end];
+            let mut name = String::new();
+            if let Some(nstart) = chunk.find("NAME=\"") {
+                let after = &chunk[nstart + 6..];
+                if let Some(nend) = after.find('"') {
+                    name = after[..nend].to_string();
+                }
+            }
+            if name.is_empty() {
+                name = extract_xml_value(chunk, "NAME");
+            }
+            name = decode_xml_entities(&name).trim().to_string();
+            if !name.is_empty() && !types.contains(&name) {
+                types.push(name);
+            }
+            pos = end;
+        }
+    }
+    
+    // Fallback if Tally is offline or returns nothing
+    if types.is_empty() {
+        types = vec![
+            "Sales".into(), "Purchase".into(), "Receipt".into(),
+            "Payment".into(), "Contra".into(), "Journal".into(),
+            "Credit Note".into(), "Debit Note".into(),
+            "Sales - Automatic".into(), "Purchase - Automatic".into(),
+        ];
+    }
+    
+    types
+}
+
 async fn fetch_tally_ledger_names(company: &str) -> std::collections::HashSet<String> {
     let xml = format!(r#"<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
@@ -954,12 +1010,18 @@ async fn supabase_fetch_guids(
     company: &str,
     from_date: Option<&str>,
     to_date: Option<&str>,
+    voucher_type: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let url = format!("{}/rest/v1/vouchers", SUPABASE_URL);
     let mut query_params: Vec<(&str, String)> = vec![
         ("select", "guid".to_string()),
         ("company_name", format!("eq.{}", company)),
     ];
+    // Scope cleanup by voucher_type if specified
+    if let Some(vt) = voucher_type {
+        query_params.push(("voucher_type", format!("eq.{}", vt)));
+        eprintln!("supabase_fetch_guids: filtering by voucher_type = {}", vt);
+    }
     // Scope cleanup to only the synced date range so other FYs are untouched
     if let (Some(fd), Some(td)) = (from_date, to_date) {
         query_params.push(("and", format!("(date.gte.{},date.lte.{})", fd, td)));
@@ -1037,6 +1099,7 @@ async fn main() {
                 .route("/tally/sync-ledgers",         get(sync_ledgers))
                 .route("/tally/list-groups",           get(list_groups))
                 .route("/tally/sync-vouchers",        get(sync_vouchers))
+                .route("/tally/voucher-types",        get(get_voucher_types))
                 .route("/tally/push-voucher",         post(push_voucher))
                 .route("/tally/debug-companies",      get(debug_companies))
                 .route("/tally/test-post",            get(test_post))
@@ -1551,7 +1614,7 @@ async fn sync_ledgers(
             println!("Ledger: {} | Parent: {} | Grandparent: {} | PrimaryGroup: {}", lname, parent, grandparent, primary);
 
             rows.push(LedgerRow {
-                name:                  lname,
+                name:                  lname.clone(),
                 parent:                parent,
                 grandparent:           grandparent,
                 primary_group:         primary,
@@ -1565,7 +1628,14 @@ async fn sync_ledgers(
                 mobile:                extract_xml_value(chunk, "LEDGERMOBILE"),
                 address:               extract_xml_value(chunk, "ADDRESS"),
                 mailing_name:          extract_xml_value(chunk, "MAILINGNAME"),
-                guid:                  extract_xml_value(chunk, "GUID"),
+                guid: {
+                    let g = extract_xml_value(chunk, "GUID");
+                    if g.trim().is_empty() {
+                        format!("{}-{}", company, lname)
+                    } else {
+                        g
+                    }
+                },
             });
             pos = end;
         }
@@ -1611,7 +1681,7 @@ async fn sync_ledgers(
 
         // Surface Supabase errors
         eprintln!("sync_ledgers: [3/5] Upserting {} ledgers to Supabase... ({:.1}s elapsed)", upsert_rows.len(), sync_start.elapsed().as_secs_f64());
-        if let Err(e) = supabase_upsert(&http, "ledgers", "company_name,name,fy_period", &upsert_rows).await {
+        if let Err(e) = supabase_upsert(&http, "ledgers", "client_id,guid,fy_period", &upsert_rows).await {
             return (StatusCode::OK, [("Content-Type", "application/json")],
                 json!({ "ok": false, "error": "SUPABASE_UPSERT_FAILED", "details": e }).to_string());
         }
@@ -1851,6 +1921,22 @@ async fn sync_ledgers(
         json!({ "ok": true, "company": company, "synced": count, "groups": group_count, "stock_items_synced": stock_count, "syncedAt": sync_time, "from_date": from_date, "to_date": to_date }).to_string())
 }
 
+// ── GET /tally/voucher-types ─────────────────────────────────────────────────
+
+async fn get_voucher_types(
+    Query(params): Query<CompanyQuery>,
+) -> impl IntoResponse {
+    let company = match params.company {
+        Some(n) if !n.is_empty() => n,
+        _ => return (StatusCode::BAD_REQUEST, [("Content-Type", "application/json")],
+            json!({ "ok": false, "error": "Missing ?company= param" }).to_string()),
+    };
+
+    let types = fetch_tally_voucher_types(&company).await;
+    (StatusCode::OK, [("Content-Type", "application/json")],
+        json!({ "ok": true, "voucher_types": types }).to_string())
+}
+
 // ── GET /tally/sync-vouchers ─────────────────────────────────────────────────
 
 async fn sync_vouchers(
@@ -1870,16 +1956,11 @@ async fn sync_vouchers(
     eprintln!("sync_vouchers: Using voucher-type-by-type pagination");
 
     // If a specific voucher_type is requested, sync only that one (frontend step mode)
-    // Otherwise sync all types in sequence
+    // Otherwise sync all types in sequence (using dynamically fetched voucher types)
     let voucher_types: Vec<String> = if let Some(ref vt) = params.voucher_type {
         vec![vt.clone()]
     } else {
-        vec![
-            "Sales".into(), "Purchase".into(), "Receipt".into(),
-            "Payment".into(), "Contra".into(), "Journal".into(),
-            "Credit Note".into(), "Debit Note".into(),
-            "Sales - Automatic".into(), "Purchase - Automatic".into(),
-        ]
+        fetch_tally_voucher_types(&company).await
     };
 
     // ── Query each voucher type separately ───────────────────────────────
@@ -1911,6 +1992,7 @@ async fn sync_vouchers(
                 Ok(x) => x,
                 Err(e) => {
                     eprintln!("    Error in chunk {}..{}: {}", chunk_from, chunk_to, e);
+                    errors += 1;
                     current_start = current_end + chrono::Duration::days(1);
                     continue;
                 }
@@ -1919,6 +2001,7 @@ async fn sync_vouchers(
             let envelope: TallyEnvelope = match from_str(&cleaned) {
                 Ok(e) => e,
                 Err(_) => { 
+                    errors += 1;
                     current_start = current_end + chrono::Duration::days(1);
                     continue; 
                 }
@@ -1926,7 +2009,9 @@ async fn sync_vouchers(
 
             let vouchers = extract_vouchers(&envelope);
             if !vouchers.is_empty() {
-                let chunk_rows: Vec<VoucherRow> = vouchers.iter().map(|v| {
+                let chunk_rows: Vec<VoucherRow> = vouchers.iter()
+                    .filter(|v| v.is_optional != "Yes")
+                    .map(|v| {
                     VoucherRow {
                         date:           v.date.clone(),
                         voucher_type:   v.voucher_type.clone(),
@@ -2047,7 +2132,7 @@ async fn sync_vouchers(
 
 
     // ── Clean up vouchers deleted from Tally ─────────────────────────────
-    if count > 0 {
+    if count > 0 && errors == 0 {
         let synced_guids: std::collections::HashSet<String> = all_rows.iter()
             .map(|v| {
                 if v.guid.is_empty() {
@@ -2058,7 +2143,7 @@ async fn sync_vouchers(
 
         let http = make_http();
         eprintln!("Cleanup: checking vouchers in range {}..{}", from_date, to_date);
-        match supabase_fetch_guids(&http, &company, Some(&from_date), Some(&to_date)).await {
+        match supabase_fetch_guids(&http, &company, Some(&from_date), Some(&to_date), params.voucher_type.as_deref()).await {
             Ok(existing_guids) => {
                 let deleted_guids: Vec<String> = existing_guids.into_iter()
                     .filter(|g| !synced_guids.contains(g))
@@ -2877,6 +2962,9 @@ async fn add_company(
         Ok(cleaned) => match from_str::<TallyEnvelope>(&cleaned) {
             Ok(env) => {
                 let vouchers = extract_vouchers(&env);
+                let vouchers: Vec<&TallyVoucher> = vouchers.into_iter()
+                    .filter(|v| v.is_optional != "Yes")
+                    .collect();
                 let count = vouchers.len();
                 if count > 0 {
                     // FIX: Generate fallback GUIDs when Tally doesn't provide them

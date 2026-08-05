@@ -241,7 +241,7 @@ html, body {
 .client-dropdown-panel {
 	position: absolute;
 	top: calc(100% + 6px);
-	right: 0;
+	left: 0;
 	width: 280px;
 	background: var(--white);
 	border: 1.5px solid var(--border2);
@@ -1377,3 +1377,109 @@ html, body {
 
 .sync-log-time { font-size: 10.5px; color: var(--text3); min-width: 64px; }
 .sync-log-msg { flex: 1; }
+
+/* ── Sync Confirmation Modal ──────────────── */
+.sync-confirm-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: rgba(15, 23, 42, 0.45);
+	backdrop-filter: blur(3px);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 9999;
+	font-family: inherit;
+	animation: fadeIn 0.2s ease-out;
+}
+
+.sync-confirm-card {
+	background: #fff;
+	border-radius: 8px;
+	box-shadow: 0 10px 30px rgba(30, 45, 125, 0.15);
+	max-width: 400px;
+	width: 90%;
+	overflow: hidden;
+	border: 1.5px solid var(--border2);
+	display: flex;
+	flex-direction: column;
+	animation: slideUpConfirm 0.25s ease-out;
+}
+
+@keyframes slideUpConfirm {
+	from { opacity: 0; transform: translateY(12px); }
+	to   { opacity: 1; transform: translateY(0); }
+}
+
+.sync-confirm-header {
+	padding: 12px 18px;
+	display: flex;
+	align-items: center;
+	background: #f7f8fd;
+	border-bottom: 1px solid var(--border);
+}
+
+.sync-confirm-title {
+	font-weight: 700;
+	color: var(--blue);
+	font-size: 13px;
+	text-transform: uppercase;
+	letter-spacing: 0.3px;
+}
+
+.sync-confirm-body {
+	padding: 18px;
+	font-size: 13px;
+	color: var(--text2);
+	line-height: 1.5;
+}
+
+.sync-confirm-actions {
+	padding: 12px 18px;
+	background: #f7f8fd;
+	border-top: 1px solid var(--border);
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 10px;
+}
+
+.btn-confirm-cancel {
+	padding: 6px 14px;
+	background: #fff;
+	border: 1.5px solid var(--border2);
+	border-radius: 6px;
+	font-weight: 600;
+	font-size: 12px;
+	cursor: pointer;
+	font-family: inherit;
+	color: var(--text3);
+	transition: all 0.15s ease;
+}
+
+.btn-confirm-cancel:hover {
+	background: #f8f9fc;
+	color: var(--text2);
+	border-color: #cbd5e1;
+}
+
+.btn-confirm-continue {
+	padding: 6px 14px;
+	background: var(--orange);
+	color: #fff;
+	border: none;
+	border-radius: 6px;
+	font-weight: 600;
+	font-size: 12px;
+	cursor: pointer;
+	font-family: inherit;
+	transition: all 0.15s ease;
+	box-shadow: 0 2px 8px rgba(232,98,26,0.30);
+}
+
+.btn-confirm-continue:hover {
+	background: var(--orange-hover);
+	box-shadow: 0 3px 12px rgba(232,98,26,0.40);
+}

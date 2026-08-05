@@ -102,8 +102,6 @@ function buildCard(company) {
   card.dataset.company = company.name;
 
   if (company.connected) {
-    const masterDate  = company.lastMasterSync  || "Never";
-    const voucherDate = company.lastVoucherSync || "Never";
     const isActive = company.activeInTally;
     const activeBadge = isActive
       ? `<span class="tally-active-badge active"><svg width="6" height="6" viewBox="0 0 12 12"><circle cx="6" cy="6" r="6" fill="#22c55e"/></svg> Active in Tally</span>`
@@ -124,10 +122,6 @@ function buildCard(company) {
         <div class="card-btns">
           <button class="btn-sync btn-master" data-action="master" data-company="${company.name}"${isActive ? '' : ' disabled title="Open this company in Tally to sync"'}>${syncIcon} Sync Master</button>
           <button class="btn-sync btn-vouchers" data-action="vouchers" data-company="${company.name}"${isActive ? '' : ' disabled title="Open this company in Tally to sync"'}>${voucherIcon} Sync Vouchers</button>
-        </div>
-        <div class="card-sync-info">
-          <span class="sync-date-item">${clockIcon} Masters: <strong>${masterDate}</strong></span>
-          <span class="sync-date-item">${clockIcon} Vouchers: <strong>${voucherDate}</strong></span>
         </div>
       </div>`;
   } else {
@@ -436,6 +430,7 @@ async function syncMaster(btn) {
   const totalSteps = groups.length + 1;
 
   for (let i = 0; i < groups.length; i++) {
+    if (window.syncAborted) break;
     const groupName = groups[i];
     updateSyncProgress(i, totalSteps);
     syncLog(`[${i + 1}/${groups.length}] Syncing ${groupName}...`, "info");
@@ -464,33 +459,46 @@ async function syncMaster(btn) {
   }
 
   // ── Step 3: Sync stock items ─────────────────────────────────────
-  updateSyncProgress(groups.length, totalSteps);
-  syncLog(`[Stock Items] Syncing stock items (HSN/GST)...`, "info");
-  try {
-    const clientId = sessionStorage.getItem("selectedClientId") || "";
-    let url = `${API_BASE}/tally/sync-ledgers?company=${encodeURIComponent(company)}&step=stock_items&client_id=${encodeURIComponent(clientId)}`;
-    if (fy.from_date) url += `&from_date=${fy.from_date}`;
-    if (fy.to_date)   url += `&to_date=${fy.to_date}`;
+  if (!window.syncAborted) {
+    updateSyncProgress(groups.length, totalSteps);
+    syncLog(`[Stock Items] Syncing stock items (HSN/GST)...`, "info");
+    try {
+      const clientId = sessionStorage.getItem("selectedClientId") || "";
+      let url = `${API_BASE}/tally/sync-ledgers?company=${encodeURIComponent(company)}&step=stock_items&client_id=${encodeURIComponent(clientId)}`;
+      if (fy.from_date) url += `&from_date=${fy.from_date}`;
+      if (fy.to_date)   url += `&to_date=${fy.to_date}`;
 
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.ok) {
-      totalStockItems = data.stock_items_synced || 0;
-      syncLog(`Stock Items: ${totalStockItems} synced`, totalStockItems > 0 ? "success" : "info");
-    } else {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.ok) {
+        totalStockItems = data.stock_items_synced || 0;
+        syncLog(`Stock Items: ${totalStockItems} synced`, totalStockItems > 0 ? "success" : "info");
+      } else {
+        totalErrors++;
+        syncLog(`Stock Items: ${data.error || "failed"}`, "error");
+      }
+    } catch (e) {
       totalErrors++;
-      syncLog(`Stock Items: ${data.error || "failed"}`, "error");
+      syncLog("Stock Items: Connection error", "error");
     }
-  } catch (e) {
-    totalErrors++;
-    syncLog("Stock Items: Connection error", "error");
   }
 
   // ── Done ─────────────────────────────────────────────────────────
+  const abortBtn = document.getElementById("sync-panel-abort");
+  if (abortBtn) abortBtn.style.display = "none";
+
+  if (window.syncAborted) {
+    syncLog("Sync is aborted. Please sync again.", "error");
+    document.getElementById("sync-panel").classList.add("done");
+    document.getElementById("sync-panel-label").textContent = "Sync is aborted. Please sync again.";
+    btn.classList.remove("loading");
+    btn.innerHTML = orig;
+    return;
+  }
+
   updateSyncProgress(totalSteps, totalSteps);
   document.getElementById("sync-panel").classList.add("done");
-  document.getElementById("sync-panel-label").textContent =
-    `Sync Complete — ${totalLedgers} ledgers, ${totalStockItems} stock items`;
+  document.getElementById("sync-panel-label").textContent = "Sync Complete";
   syncLog(`Done! ${totalLedgers} ledgers, ${totalStockItems} stock items synced, ${totalErrors} errors`, totalErrors > 0 ? "error" : "success");
 
   if (totalLedgers > 0 || totalStockItems > 0) {
@@ -512,7 +520,7 @@ const VOUCHER_TYPES = [
 
 function syncLog(msg, level = "info") {
   const logs = document.getElementById("sync-logs");
-  const now = new Date().toLocaleTimeString("en-IN", { hour12: false });
+  const now = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false });
   const icons = { info: "⏳", success: "✅", error: "❌" };
   logs.innerHTML += `<div class="sync-log-entry ${level}">
     <span class="sync-log-time">${now}</span>
@@ -538,6 +546,21 @@ function showSyncPanel(company, mode = "vouchers") {
   pctText.textContent = "0%";
   logs.innerHTML = "";
   label.textContent = `${title} — ${company}`;
+
+  // Set up abort button
+  window.syncAborted = false;
+  const abortBtn = document.getElementById("sync-panel-abort");
+  if (abortBtn) {
+    abortBtn.style.display = "inline-block";
+    abortBtn.textContent = "Abort";
+    abortBtn.disabled = false;
+    abortBtn.onclick = () => {
+      window.syncAborted = true;
+      abortBtn.textContent = "Aborting...";
+      abortBtn.disabled = true;
+      syncLog("Sync abort requested by user...", "error");
+    };
+  }
 
   // Toggle collapse
   document.getElementById("sync-panel-toggle").onclick = () => {
@@ -568,10 +591,27 @@ async function syncVouchers(btn) {
   let totalSynced = 0;
   let totalErrors = 0;
 
-  for (let i = 0; i < VOUCHER_TYPES.length; i++) {
-    const vtype = VOUCHER_TYPES[i];
-    syncLog(`[${i + 1}/${VOUCHER_TYPES.length}] Syncing ${vtype}...`, "info");
-    updateSyncProgress(i, VOUCHER_TYPES.length);
+  // Fetch voucher types dynamically from Tally via backend
+  let voucherTypes = [...VOUCHER_TYPES];
+  try {
+    syncLog("Fetching voucher types from Tally...", "info");
+    const typesRes = await fetch(`${API_BASE}/tally/voucher-types?company=${encodeURIComponent(company)}`);
+    const typesData = await typesRes.json();
+    if (typesData.ok && Array.isArray(typesData.voucher_types) && typesData.voucher_types.length > 0) {
+      voucherTypes = typesData.voucher_types;
+      syncLog(`Found ${voucherTypes.length} voucher types in Tally.`, "info");
+    } else {
+      syncLog("Using default voucher types fallback.", "info");
+    }
+  } catch (err) {
+    syncLog("Failed to fetch voucher types from Tally, using defaults.", "info");
+  }
+
+  for (let i = 0; i < voucherTypes.length; i++) {
+    if (window.syncAborted) break;
+    const vtype = voucherTypes[i];
+    syncLog(`[${i + 1}/${voucherTypes.length}] Syncing ${vtype}...`, "info");
+    updateSyncProgress(i, voucherTypes.length);
 
     try {
       const clientId = sessionStorage.getItem("selectedClientId") || "";
@@ -596,10 +636,22 @@ async function syncVouchers(btn) {
     }
   }
 
-  updateSyncProgress(VOUCHER_TYPES.length, VOUCHER_TYPES.length);
+  // Hide abort button on complete
+  const abortBtn = document.getElementById("sync-panel-abort");
+  if (abortBtn) abortBtn.style.display = "none";
+
+  if (window.syncAborted) {
+    syncLog("Sync is aborted. Please sync again.", "error");
+    document.getElementById("sync-panel").classList.add("done");
+    document.getElementById("sync-panel-label").textContent = "Sync is aborted. Please sync again.";
+    btn.classList.remove("loading");
+    btn.innerHTML = orig;
+    return;
+  }
+
+  updateSyncProgress(voucherTypes.length, voucherTypes.length);
   document.getElementById("sync-panel").classList.add("done");
-  document.getElementById("sync-panel-label").textContent =
-    `Sync Complete — ${totalSynced} vouchers (${totalErrors} errors)`;
+  document.getElementById("sync-panel-label").textContent = "Sync Complete";
   syncLog(`Done! ${totalSynced} total vouchers synced, ${totalErrors} errors`, totalErrors > 0 ? "error" : "success");
 
   if (totalSynced > 0) {
@@ -637,12 +689,66 @@ async function checkTallyHealth() {
 // EVENTS
 // ═══════════════════════════════════════════════════════
 
+function showSyncConfirmation(company, type, onConfirm) {
+  const overlay = document.createElement("div");
+  overlay.className = "sync-confirm-overlay";
+
+  const displayName = type === "master" ? "Master Data" : "Vouchers";
+  const clientLabelText = document.getElementById("client-select-label")?.textContent || "";
+  const displayCompany = clientLabelText && clientLabelText !== "Select Client" ? clientLabelText : company;
+
+  overlay.innerHTML = `
+    <div class="sync-confirm-card">
+      <div class="sync-confirm-header">
+        <div class="sync-confirm-title">Confirm Sync</div>
+      </div>
+      <div class="sync-confirm-body">
+        You are about to sync <strong style="color:#0f172a;">${displayName}</strong> for company <strong style="color:#0f172a;">${displayCompany}</strong>.
+      </div>
+      <div class="sync-confirm-actions">
+        <button id="sync-confirm-cancel" class="btn-confirm-cancel">Cancel</button>
+        <button id="sync-confirm-continue" class="btn-confirm-continue">Continue</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  // Focus Continue
+  document.getElementById("sync-confirm-continue").focus();
+
+  const close = () => {
+    overlay.remove();
+  };
+
+  document.getElementById("sync-confirm-cancel").onclick = close;
+  document.getElementById("sync-confirm-continue").onclick = () => {
+    close();
+    onConfirm();
+  };
+
+  // Close on Escape
+  const escHandler = (e) => {
+    if (e.key === "Escape") {
+      close();
+      window.removeEventListener("keydown", escHandler);
+    }
+  };
+  window.addEventListener("keydown", escHandler);
+}
+
 document.addEventListener("click", e => {
   const btn = e.target.closest("[data-action]");
   if (!btn) return;
-  if (btn.dataset.action === "master")      syncMaster(btn);
-  if (btn.dataset.action === "vouchers")    syncVouchers(btn);
-  if (btn.dataset.action === "add-company") addCompany(btn);
+  if (btn.dataset.action === "master") {
+    showSyncConfirmation(btn.dataset.company, "master", () => syncMaster(btn));
+  }
+  if (btn.dataset.action === "vouchers") {
+    showSyncConfirmation(btn.dataset.company, "vouchers", () => syncVouchers(btn));
+  }
+  if (btn.dataset.action === "add-company") {
+    addCompany(btn);
+  }
 });
 
 // Persist FY dropdown selection when user changes it
@@ -697,12 +803,9 @@ document.querySelector(".btn-logout").addEventListener("click", async () => {
 (function() {
   const email = sessionStorage.getItem("sb_user_email");
   if (email) {
-    const appName = document.querySelector(".app-name");
-    if (appName) {
-      const emailBadge = document.createElement("span");
-      emailBadge.style.cssText = "font-size:11px;color:var(--text3);font-weight:400;margin-left:8px;";
-      emailBadge.textContent = email;
-      appName.parentElement.appendChild(emailBadge);
+    const badge = document.getElementById("user-email-badge");
+    if (badge) {
+      badge.textContent = email;
     }
   }
 })();
