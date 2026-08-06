@@ -1755,7 +1755,9 @@ async fn sync_ledgers(
         let stock_xml = format!(r#"<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>StockItemSync</ID></HEADER>
-  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}</STATICVARIABLES>
+  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}
+    <SVFROMDATE TYPE="Date">{from_date}</SVFROMDATE><SVTODATE TYPE="Date">{to_date}</SVTODATE>
+  </STATICVARIABLES>
   <TDL><TDLMESSAGE><COLLECTION NAME="StockItemSync" ISMODIFY="No">
     <TYPE>Stock Item</TYPE>
     <NATIVEMETHOD>Name</NATIVEMETHOD>
@@ -1767,9 +1769,10 @@ async fn sync_ledgers(
     <NATIVEMETHOD>OpeningValue</NATIVEMETHOD>
     <NATIVEMETHOD>Description</NATIVEMETHOD>
     <NATIVEMETHOD>GSTDetails</NATIVEMETHOD>
-    <NATIVEMETHOD>HSNCode</NATIVEMETHOD>
+    <NATIVEMETHOD>GSTHSNCode</NATIVEMETHOD>
+    <NATIVEMETHOD>HSNDetails</NATIVEMETHOD>
   </COLLECTION></TDLMESSAGE></TDL></DESC></BODY>
-</ENVELOPE>"#, cvar = company_var(&company));
+</ENVELOPE>"#, cvar = company_var(&company), from_date = from_date, to_date = to_date);
 
         match tally_request(&stock_xml).await {
             Ok(xml) => {
@@ -1818,6 +1821,16 @@ async fn sync_ledgers(
                             let mut hsn = String::new();
                             let mut rate = 0.0_f64;
 
+                            // TallyPrime 3.0+ nested HSN details
+                            if let Some(hsn_start) = chunk.find("<HSNDETAILS.LIST") {
+                                let hsn_end_tag = "</HSNDETAILS.LIST>";
+                                if let Some(hsn_end) = chunk[hsn_start..].find(hsn_end_tag) {
+                                    let hsn_chunk = &chunk[hsn_start..hsn_start + hsn_end + hsn_end_tag.len()];
+                                    let h_code = extract_xml_value(hsn_chunk, "HSNCODE");
+                                    if !h_code.is_empty() { hsn = h_code; }
+                                }
+                            }
+
                             if let Some(gst_start) = chunk.find("<GSTDETAILS.LIST") {
                                 let gst_end_tag = "</GSTDETAILS.LIST>";
                                 if let Some(gst_end) = chunk[gst_start..].find(gst_end_tag) {
@@ -1863,6 +1876,9 @@ async fn sync_ledgers(
                             }
 
                             if hsn.is_empty() {
+                                hsn = extract_xml_value(chunk, "GSTHSNCODE");
+                            }
+                            if hsn.is_empty() {
                                 hsn = extract_xml_value(chunk, "HSNCODE");
                             }
                             if hsn.is_empty() {
@@ -1889,6 +1905,8 @@ async fn sync_ledgers(
                             "hsn_code": hsn_code.trim(),
                             "gst_rate": gst_rate,
                             "description": description.trim(),
+                            "client_id": params.client_id.as_deref().unwrap_or("").trim().to_string(),
+                            "fy_period": fy_period.clone(),
                         }));
                     }
                     pos = end;
@@ -1901,7 +1919,7 @@ async fn sync_ledgers(
 
                 if !items.is_empty() {
                     let http2 = make_http();
-                    if let Err(e) = supabase_upsert(&http2, "stock_items", "company_name,name", &items).await {
+                    if let Err(e) = supabase_upsert(&http2, "stock_items", "company_name,name,fy_period", &items).await {
                         eprintln!("Warning: stock_items upsert failed: {}", e);
                     } else {
                         eprintln!("Successfully upserted {} stock items to Supabase", items.len());
@@ -2837,12 +2855,15 @@ async fn add_company(
     let stock_item_xml = format!(r#"<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>StockItemSync</ID></HEADER>
-  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}</STATICVARIABLES>
+  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{cvar}
+    <SVFROMDATE TYPE="Date">{fy_from}</SVFROMDATE><SVTODATE TYPE="Date">{fy_to}</SVTODATE>
+  </STATICVARIABLES>
   <TDL><TDLMESSAGE><COLLECTION NAME="StockItemSync" ISMODIFY="No">
     <TYPE>Stock Item</TYPE>
     <NATIVEMETHOD>*</NATIVEMETHOD>
+    <NATIVEMETHOD>GSTHSNCode</NATIVEMETHOD>
   </COLLECTION></TDLMESSAGE></TDL></DESC></BODY>
-</ENVELOPE>"#, cvar = company_var(&company));
+</ENVELOPE>"#, cvar = company_var(&company), fy_from = fy_from, fy_to = fy_to);
 
     let stock_items_count = match tally_request(&stock_item_xml).await {
         Ok(xml) => {
@@ -2871,6 +2892,17 @@ async fn add_company(
                     let (hsn_code, gst_rate) = {
                         let mut hsn = String::new();
                         let mut rate = 0.0_f64;
+
+                        // TallyPrime 3.0+ nested HSN details
+                        if let Some(hsn_start) = chunk.find("<HSNDETAILS.LIST") {
+                            let hsn_end_tag = "</HSNDETAILS.LIST>";
+                            if let Some(hsn_end) = chunk[hsn_start..].find(hsn_end_tag) {
+                                let hsn_chunk = &chunk[hsn_start..hsn_start + hsn_end + hsn_end_tag.len()];
+                                let h_code = extract_xml_value(hsn_chunk, "HSNCODE");
+                                if !h_code.is_empty() { hsn = h_code; }
+                            }
+                        }
+
                         if let Some(gst_start) = chunk.find("<GSTDETAILS.LIST") {
                             let gst_end_tag = "</GSTDETAILS.LIST>";
                             if let Some(gst_end) = chunk[gst_start..].find(gst_end_tag) {
@@ -2915,7 +2947,12 @@ async fn add_company(
                                 }
                             }
                         }
-                        if hsn.is_empty() { hsn = extract_xml_value(chunk, "HSNCODE"); }
+                        if hsn.is_empty() {
+                            hsn = extract_xml_value(chunk, "GSTHSNCODE");
+                        }
+                        if hsn.is_empty() {
+                            hsn = extract_xml_value(chunk, "HSNCODE");
+                        }
                         if hsn.is_empty() {
                             let h = extract_xml_value(chunk, "HSN");
                             if !h.is_empty() { hsn = h; }
@@ -2937,6 +2974,7 @@ async fn add_company(
                         "hsn_code": hsn_code.trim(),
                         "gst_rate": gst_rate,
                         "description": extract_xml_value(chunk, "DESCRIPTION").trim().to_string(),
+                        "fy_period": add_fy_period.clone(),
                     }));
                 }
                 pos = end;
@@ -2945,7 +2983,7 @@ async fn add_company(
             let hsn_count = items.iter().filter(|i| !i["hsn_code"].as_str().unwrap_or("").is_empty()).count();
             eprintln!("  → {} items with HSN code", hsn_count);
             if !items.is_empty() {
-                if let Err(e) = supabase_upsert(&http, "stock_items", "company_name,name", &items).await {
+                if let Err(e) = supabase_upsert(&http, "stock_items", "company_name,name,fy_period", &items).await {
                     eprintln!("Warning: stock_items upsert in add-company failed: {}", e);
                 }
             }
